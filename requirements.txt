@@ -8,7 +8,7 @@
 # seaborn~=0.13.2
 click~=8.3.1
 torch~=2.2.0
-torchvision~=0.15.2
+torchvision~=0.17.0
 lightning~=2.6.0
 torchmetrics~=1.8.2
 pytorchvideo==0.1.5
