@@ -18,7 +18,7 @@ in "[Rethinking Video ViTs: Sparse Video Tubes for Joint Image and Video Learnin
 
 # Usage
 
-This project is based on `torch==1.13.1` and [pytorch-lightning](https://github.com/Lightning-AI/lightning)
+This project is based on `torch~=2.10.0` and [pytorch-lightning](https://github.com/Lightning-AI/lightning)
 
 ## Setup
 
