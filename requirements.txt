@@ -14,3 +14,4 @@ torchmetrics~=1.8.2
 pytorchvideo==0.1.5
 matplotlib~=3.10.8
 seaborn~=0.13.2
+numpy<2.0
