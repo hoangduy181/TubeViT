@@ -60,7 +60,7 @@ def main(
     test_transform = T.Compose(
         [
             ToTensorVideo(),
-            T.Resize(size=video_size),
+            T.Resize(size=video_size, antialias=True),
             Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ]
     )

@@ -1,8 +1,12 @@
 import os
+import warnings
 from typing import Callable, Optional, Tuple
 
 from torch import Tensor
 from torchvision.datasets import UCF101
+
+# Suppress pts_unit warning from torchvision video reading
+warnings.filterwarnings('ignore', message=".*pts_unit.*", category=UserWarning)
 
 
 class MyUCF101(UCF101):
@@ -71,6 +75,10 @@ class MyUCF101(UCF101):
             super().__init__(*args, **kwargs)
             print(f"  ✓ Dataset initialized successfully")
             print(f"  Total samples: {len(self.samples) if hasattr(self, 'samples') else 'unknown'}")
+            
+            # Note: pts_unit warning is suppressed at module level
+            # The VideoClips object is created internally by torchvision
+            # and we cannot directly modify its pts_unit parameter
         except Exception as e:
             print(f"  ✗ Error initializing dataset: {e}")
             import traceback

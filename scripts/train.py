@@ -67,7 +67,7 @@ def main(
             Permute(dims=[1, 0, 2, 3]),  # T, C, H, W
             RandAugment(magnitude=10, num_layers=2),
             Permute(dims=[1, 0, 2, 3]),  # C, T, H, W
-            T.Resize(size=video_size),
+            T.Resize(size=video_size, antialias=True),
             Normalize(mean=imagenet_mean, std=imagenet_std),
         ]
     )
@@ -75,7 +75,7 @@ def main(
     test_transform = T.Compose(
         [
             ToTensorVideo(),
-            T.Resize(size=video_size),
+            T.Resize(size=video_size, antialias=True),
             Normalize(mean=imagenet_mean, std=imagenet_std),
         ]
     )
