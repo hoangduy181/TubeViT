@@ -59,37 +59,51 @@ class SparseTubesTokenizer(nn.Module):
         self.offsets = offsets
 
         self.conv_proj_weight = nn.Parameter(
-            torch.empty((self.hidden_dim, 3, *self.kernel_sizes[0])).normal_(), requires_grad=True
-        )
+            torch.empty(
+                (self.hidden_dim, 3, *self.kernel_sizes[0])
+            ).normal_(),
+            requires_grad=True,
+        ) # (out_channels, in_channels, kT, kH, kW) 
+        # initialize first tube weight with the first kernel size   
 
         self.register_parameter("conv_proj_weight", self.conv_proj_weight)
 
-        self.conv_proj_bias = nn.Parameter(torch.zeros(len(self.kernel_sizes), self.hidden_dim), requires_grad=True)
+        self.conv_proj_bias = nn.Parameter(
+            torch.zeros(len(self.kernel_sizes), self.hidden_dim) # (num_tubes, hidden_dim)
+            , requires_grad=True)
         self.register_parameter("conv_proj_bias", self.conv_proj_bias)
 
     def forward(self, x: Tensor) -> Tensor:
         n, c, t, h, w = x.shape  # CTHW
+        # (batch, channels, time, height, width)
+
         tubes = []
-        for i in range(len(self.kernel_sizes)):
+        for i in range(len(self.kernel_sizes)): # loop on different tube types
             if i == 0:
                 weight = self.conv_proj_weight
             else:
                 weight = F.interpolate(self.conv_proj_weight, self.kernel_sizes[i], mode="trilinear")
+                # interpolate the first tube weight to the current kernel size
+                # scale receptive field mà không scale params.
 
             tube = F.conv3d(
-                x[:, :, self.offsets[i][0] :, self.offsets[i][1] :, self.offsets[i][2] :],
+                x[:, :, self.offsets[i][0] :, self.offsets[i][1] :, self.offsets[i][2] :], # process offset
                 weight,
                 bias=self.conv_proj_bias[i],
                 stride=self.strides[i],
             )
+            # we want to prevent tubes always starts with (0,0,0) 
+            # try to separate the tubes, so its not dense and overlap...
+            # increase the diversity of the tubes.
 
-            tube = tube.reshape((n, self.hidden_dim, -1))
+            tube = tube.reshape((n, self.hidden_dim, -1)) # gộp toàn bộ T, H, W thành 1 dim, để chuyển thành token.
 
             tubes.append(tube)
 
         x = torch.cat(tubes, dim=-1)
-        x = x.permute(0, 2, 1).contiguous()
-        return x
+        x = x.permute(0, 2, 1).contiguous() # (n, hidden_dim, N) -> (n, N, hidden_dim)
+
+        return x 
 
 
 class SelfAttentionPooling(nn.Module):
@@ -140,9 +154,11 @@ class TubeViT(nn.Module):
         self.video_shape = np.array(video_shape)  # CTHW
         self.num_classes = num_classes
         self.hidden_dim = hidden_dim
-        self.kernel_sizes = (
-            (8, 8, 8),
-            (16, 4, 4),
+
+        # according to the paper, we have 4 type of tubes
+        self.kernel_sizes = ( # kT, kH, kW
+            (8, 8, 8), 
+            (16, 4, 4), 
             (4, 12, 12),
             (1, 16, 16),
         )
@@ -161,7 +177,10 @@ class TubeViT(nn.Module):
             (0, 0, 0),
         )
         self.sparse_tubes_tokenizer = SparseTubesTokenizer(
-            self.hidden_dim, self.kernel_sizes, self.strides, self.offsets
+            self.hidden_dim,
+            self.kernel_sizes,
+            self.strides,
+            self.offsets,
         )
 
         self.pos_embedding = self._generate_position_embedding()
