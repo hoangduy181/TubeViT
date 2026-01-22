@@ -69,12 +69,26 @@ def main(
         ]
     )
 
+    print(f"\n{'='*60}")
+    print("Loading Training Dataset")
+    print(f"{'='*60}")
+    print(f"Dataset root: {dataset_root}")
+    print(f"Annotation path: {annotation_path}")
+    print(f"Frames per clip: {frames_per_clip}")
+    print(f"Video size: {video_size}")
+    print(f"Batch size: {batch_size}")
+    
     train_metadata_file = "ucf101-train-meta.pickle"
     train_precomputed_metadata = None
     if os.path.exists(train_metadata_file):
+        print(f"Loading precomputed metadata from {train_metadata_file}...")
         with open(train_metadata_file, "rb") as f:
             train_precomputed_metadata = pickle.load(f)
+        print("✓ Metadata loaded")
+    else:
+        print(f"No precomputed metadata found. Will create {train_metadata_file} after loading dataset.")
 
+    print("\nInitializing training dataset...")
     train_set = MyUCF101(
         root=dataset_root,
         annotation_path=annotation_path,
@@ -84,17 +98,28 @@ def main(
         output_format="THWC",
         transform=train_transform,
     )
+    print(f"✓ Training dataset loaded: {len(train_set)} samples")
 
     if not os.path.exists(train_metadata_file):
+        print(f"Saving metadata to {train_metadata_file}...")
         with open(train_metadata_file, "wb") as f:
             pickle.dump(train_set.metadata, f, protocol=pickle.HIGHEST_PROTOCOL)
+        print("✓ Metadata saved")
 
+    print(f"\n{'='*60}")
+    print("Loading Validation Dataset")
+    print(f"{'='*60}")
     val_metadata_file = "ucf101-val-meta.pickle"
     val_precomputed_metadata = None
     if os.path.exists(val_metadata_file):
+        print(f"Loading precomputed metadata from {val_metadata_file}...")
         with open(val_metadata_file, "rb") as f:
             val_precomputed_metadata = pickle.load(f)
+        print("✓ Metadata loaded")
+    else:
+        print(f"No precomputed metadata found. Will create {val_metadata_file} after loading dataset.")
 
+    print("\nInitializing validation dataset...")
     val_set = MyUCF101(
         root=dataset_root,
         annotation_path=annotation_path,
@@ -104,11 +129,17 @@ def main(
         output_format="THWC",
         transform=test_transform,
     )
+    print(f"✓ Validation dataset loaded: {len(val_set)} samples")
 
     if not os.path.exists(val_metadata_file):
+        print(f"Saving metadata to {val_metadata_file}...")
         with open(val_metadata_file, "wb") as f:
             pickle.dump(val_set.metadata, f, protocol=pickle.HIGHEST_PROTOCOL)
+        print("✓ Metadata saved")
 
+    print(f"\n{'='*60}")
+    print("Creating DataLoaders")
+    print(f"{'='*60}")
     train_dataloader = DataLoader(
         train_set,
         batch_size=batch_size,
@@ -117,6 +148,7 @@ def main(
         drop_last=True,
         pin_memory=True,
     )
+    print(f"✓ Training DataLoader created: {len(train_dataloader)} batches")
 
     val_dataloader = DataLoader(
         val_set,
@@ -126,9 +158,12 @@ def main(
         drop_last=True,
         pin_memory=True,
     )
+    print(f"✓ Validation DataLoader created: {len(val_dataloader)} batches")
 
+    print("\nTesting data loading...")
     x, y = next(iter(train_dataloader))
-    print(x.shape)
+    print(f"✓ Sample batch shape: {x.shape}")
+    print(f"✓ Sample labels shape: {y.shape}")
 
     if preview_video:
         x = x.permute(0, 2, 3, 4, 1)
