@@ -15,6 +15,11 @@ from torchvision.transforms._transforms_video import ToTensorVideo
 from tubevit.dataset import MyUCF101
 from tubevit.model import TubeViTLightningModule
 
+# Enable Tensor Core optimization for NVIDIA GPUs with Tensor Cores (e.g., A100, V100, etc.)
+# 'medium' provides a good balance between performance and precision
+# Use 'high' for better precision if needed
+torch.set_float32_matmul_precision('medium')
+
 
 @click.command()
 @click.option("-r", "--dataset-root", type=click.Path(exists=True), required=True, help="path to dataset.")
@@ -25,7 +30,7 @@ from tubevit.model import TubeViTLightningModule
 @click.option("-b", "--batch-size", type=int, default=32, help="batch size.")
 @click.option("-f", "--frames-per-clip", type=int, default=32, help="frame per clip.")
 @click.option("-v", "--video-size", type=click.Tuple([int, int]), default=(224, 224), help="frame per clip.")
-@click.option("--num-workers", type=int, default=0)
+@click.option("--num-workers", type=int, default=None, help="Number of DataLoader workers. Defaults to number of CPUs.")
 @click.option("--seed", type=int, default=42, help="random seed.")
 @click.option("--verbose", type=bool, is_flag=True, show_default=True, default=False, help="Show input video")
 def main(
@@ -42,6 +47,11 @@ def main(
     verbose,
 ):
     pl.seed_everything(seed)
+
+    # Set num_workers to number of CPUs if not specified
+    if num_workers is None:
+        num_workers = os.cpu_count() or 0
+        print(f"Using {num_workers} DataLoader workers (auto-detected from CPU count)")
 
     with open(label_path, "r") as f:
         labels = f.read().splitlines()

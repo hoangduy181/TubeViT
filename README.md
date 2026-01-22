@@ -14,7 +14,7 @@ in "[Rethinking Video ViTs: Sparse Video Tubes for Joint Image and Video Learnin
 - [ ] pipeline
     - [x] training
     - [x] evaluating
-    - [ ] inference
+    - [x] inference
 
 # Usage
 
@@ -77,7 +77,7 @@ Options:
   -v, --video-size <INTEGER INTEGER>...
                                   frame per clip.
   --max-epochs INTEGER            max epochs.
-  --num-workers INTEGER
+  --num-workers INTEGER           Number of DataLoader workers. Defaults to number of CPUs.
   --fast-dev-run
   --seed INTEGER                  random seed.
   --preview-video                 Show input video
@@ -89,6 +89,8 @@ Options:
 ```commandline
 python scripts/train.py -r path/to/dataset -a path/to/annotation
 ```
+
+**Note:** By default, `--num-workers` automatically uses all available CPUs for optimal data loading performance. You can override this by specifying `--num-workers <number>` if needed.
 
 ## Evaluation
 
@@ -107,7 +109,7 @@ Options:
   -f, --frames-per-clip INTEGER   frame per clip.
   -v, --video-size <INTEGER INTEGER>...
                                   frame per clip.
-  --num-workers INTEGER
+  --num-workers INTEGER           Number of DataLoader workers. Defaults to number of CPUs.
   --seed INTEGER                  random seed.
   --verbose                       Show input video
   --help                          Show this message and exit.
@@ -116,8 +118,75 @@ Options:
 ### Examples
 
 ```commandline
-python scripts/evaluate.py -r path/to/dataset -a path/to/annotation
+python scripts/evaluate.py -r path/to/dataset -a path/to/annotation -m path/to/model.ckpt --label-path path/to/classInd.txt
 ```
+
+**Note:** By default, `--num-workers` automatically uses all available CPUs for optimal data loading performance. You can override this by specifying `--num-workers <number>` if needed.
+
+## Inference
+
+Run inference on a single video file using a trained model.
+
+```commandline
+python scripts/inference.py --help
+
+Usage: inference.py [OPTIONS] VIDEO_PATH
+
+Arguments:
+  VIDEO_PATH  [required]
+
+Options:
+  -m, --model-path PATH          path to model weight.  [required]
+  --label-path PATH               path to classInd.txt.  [required]
+  -f, --frames-per-clip INTEGER   frame per clip.
+  -v, --video-size <INTEGER INTEGER>...
+                                  frame per clip.
+  --help                          Show this message and exit.
+```
+
+### Examples
+
+```commandline
+python scripts/inference.py path/to/video.mp4 -m path/to/model.ckpt --label-path path/to/classInd.txt
+```
+
+## Visualize Dataset
+
+Visualize samples from the UCF101 dataset to inspect the data and transformations.
+
+```commandline
+python scripts/visualise_dataset.py --help
+
+Usage: visualise_dataset.py [OPTIONS]
+
+Options:
+  -r, --dataset-root PATH         path to dataset.  [required]
+  -a, --annotation-path PATH      path to dataset.  [required]
+  --label-path PATH               path to classInd.txt.  [required]
+  -b, --batch-size INTEGER        batch size.
+  -f, --frames-per-clip INTEGER   frame per clip.
+  -v, --video-size <INTEGER INTEGER>...
+                                  frame per clip.
+  --num-workers INTEGER           Number of DataLoader workers. Defaults to number of CPUs.
+  --seed INTEGER                  random seed.
+  --help                          Show this message and exit.
+```
+
+### Examples
+
+```commandline
+python scripts/visualise_dataset.py -r path/to/dataset -a path/to/annotation --label-path path/to/classInd.txt
+```
+
+## Visualize Positional Embeddings
+
+Generate a visualization of the 3D positional embeddings used in TubeViT.
+
+```commandline
+python scripts/visualise_pos_embed.py
+```
+
+This script generates `Position_Embedding.png` showing the positional embedding patterns for different tube configurations.
 
 # Model Architecture
 

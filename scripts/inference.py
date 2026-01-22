@@ -7,6 +7,11 @@ from torchvision.transforms._transforms_video import NormalizeVideo, CenterCropV
 
 from tubevit.model import TubeViTLightningModule
 
+# Enable Tensor Core optimization for NVIDIA GPUs with Tensor Cores (e.g., A100, V100, etc.)
+# 'medium' provides a good balance between performance and precision
+# Use 'high' for better precision if needed
+torch.set_float32_matmul_precision('medium')
+
 
 @click.command()
 @click.argument("video-path")
@@ -32,7 +37,10 @@ def main(
             [
                 UniformTemporalSubsample(frames_per_clip),
                 Lambda(lambda x: x / 255.0),
-                NormalizeVideo(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+                NormalizeVideo(
+                    mean=[0.485, 0.456, 0.406], 
+                    std=[0.229, 0.224, 0.225]
+                ),
                 ShortSideScale(
                     size=video_size[0]
                 ),

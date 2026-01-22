@@ -17,6 +17,23 @@ class MyUCF101(UCF101):
         print(f"  Annotation path: {annotation_path}")
         print(f"  Train: {train}")
         
+        # Check if annotation_path is a file or directory
+        # Torchvision expects annotation_path to be a directory containing trainlist01.txt, etc.
+        if annotation_path and os.path.exists(annotation_path):
+            if os.path.isfile(annotation_path):
+                # If it's a file, use its directory
+                annotation_dir = os.path.dirname(annotation_path)
+                print(f"  Annotation path is a file, using directory: {annotation_dir}")
+                kwargs['annotation_path'] = annotation_dir
+            elif os.path.isdir(annotation_path):
+                # If it's already a directory, check for required files
+                trainlist = os.path.join(annotation_path, 'trainlist01.txt')
+                testlist = os.path.join(annotation_path, 'testlist01.txt')
+                if os.path.exists(trainlist):
+                    print(f"  Found trainlist01.txt in annotation directory")
+                if os.path.exists(testlist):
+                    print(f"  Found testlist01.txt in annotation directory")
+        
         # Check if root contains train/val subdirectories
         if root and os.path.exists(root):
             train_dir = os.path.join(root, 'train')

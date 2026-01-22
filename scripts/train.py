@@ -10,6 +10,7 @@ import pickle
 import click
 import lightning.pytorch as pl
 import matplotlib.pyplot as plt
+import torch
 from lightning.pytorch.loggers import TensorBoardLogger
 from pytorchvideo.transforms import Normalize, Permute, RandAugment
 from torch.utils.data import DataLoader
@@ -18,6 +19,11 @@ from torchvision.transforms._transforms_video import ToTensorVideo
 
 from tubevit.dataset import MyUCF101
 from tubevit.model import TubeViTLightningModule
+
+# Enable Tensor Core optimization for NVIDIA GPUs with Tensor Cores (e.g., A100, V100, etc.)
+# 'medium' provides a good balance between performance and precision
+# Use 'high' for better precision if needed
+torch.set_float32_matmul_precision('medium')
 
 
 @click.command()
@@ -28,7 +34,7 @@ from tubevit.model import TubeViTLightningModule
 @click.option("-f", "--frames-per-clip", type=int, default=32, help="frame per clip.")
 @click.option("-v", "--video-size", type=click.Tuple([int, int]), default=(224, 224), help="frame per clip.")
 @click.option("--max-epochs", type=int, default=10, help="max epochs.")
-@click.option("--num-workers", type=int, default=0)
+@click.option("--num-workers", type=int, default=None, help="Number of DataLoader workers. Defaults to number of CPUs.")
 @click.option("--fast-dev-run", type=bool, is_flag=True, show_default=True, default=False)
 @click.option("--seed", type=int, default=42, help="random seed.")
 @click.option("--preview-video", type=bool, is_flag=True, show_default=True, default=False, help="Show input video")
@@ -46,6 +52,11 @@ def main(
     preview_video,
 ):
     pl.seed_everything(seed)
+
+    # Set num_workers to number of CPUs if not specified
+    if num_workers is None:
+        num_workers = os.cpu_count() or 0
+        print(f"Using {num_workers} DataLoader workers (auto-detected from CPU count)")
 
     imagenet_mean = [0.485, 0.456, 0.406]
     imagenet_std = [0.229, 0.224, 0.225]
