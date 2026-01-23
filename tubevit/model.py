@@ -332,11 +332,19 @@ class TubeViTLightningModule(pl.LightningModule):
         self.log("val_loss", loss, prog_bar=True)
         self.log("val_acc", accuracy(y_pred, y, task="multiclass", num_classes=self.num_classes), prog_bar=True)
         self.log("val_f1", f1_score(y_pred, y, task="multiclass", num_classes=self.num_classes), prog_bar=True)
+        
+        # Periodically clear GPU cache during validation to prevent OOM
+        if batch_idx % 20 == 0 and torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
         return loss
 
     def on_train_epoch_end(self) -> None:
         self.log("lr", self.optimizers().optimizer.param_groups[0]["lr"], on_step=False, on_epoch=True)
+        # Force GPU memory cleanup after training epoch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
 
     def configure_optimizers(self):
         optimizer = optim.Adam(self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
