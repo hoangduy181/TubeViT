@@ -20,6 +20,7 @@ from torchvision.transforms._transforms_video import ToTensorVideo
 from tubevit.dataset import MyUCF101
 from tubevit.model import TubeViTLightningModule
 from tubevit.gpu_monitor import GPUMonitorCallback
+from lightning.pytorch.callbacks import ModelCheckpoint
 
 # Enable Tensor Core optimization for NVIDIA GPUs with Tensor Cores (e.g., A100, V100, etc.)
 # 'medium' provides a good balance between performance and precision
@@ -199,12 +200,27 @@ def main(
         weight_decay=0.001,
         weight_path="tubevit_b_(a+iv)+(d+v)+(e+iv)+(f+v).pt",
         max_epochs=max_epochs,
+        # Additional training parameters to save in hparams.yaml
+        batch_size=batch_size,
+        frames_per_clip=frames_per_clip,
+        video_size=video_size,
+        num_workers=num_workers,
+        seed=seed,
     )
 
     # Setup callbacks
     callbacks = [
         pl.callbacks.LearningRateMonitor(logging_interval="epoch"),
         GPUMonitorCallback(log_every_n_steps=50, log_every_n_epochs=1),  # Monitor GPU every 50 steps
+        ModelCheckpoint(
+            dirpath="./models/checkpoints",
+            filename="tubevit-{epoch:02d}-{val_loss:.2f}",
+            monitor="val_loss",
+            save_top_k=3,  # Save top 3 models
+            mode="min",
+            save_last=True,  # Always save last checkpoint
+            every_n_epochs=1,
+        )
     ]
     logger = TensorBoardLogger("logs", name="TubeViT")
 

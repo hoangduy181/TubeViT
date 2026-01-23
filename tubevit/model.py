@@ -151,9 +151,9 @@ class TubeViT(nn.Module):
         representation_size=None,
     ):
         super(TubeViT, self).__init__()
-        self.video_shape = np.array(video_shape)  # CTHW
+        self.video_shape = np.array(video_shape)  # (C, T, H, W)
         self.num_classes = num_classes
-        self.hidden_dim = hidden_dim
+        self.hidden_dim = hidden_dim #(768) as ViT
 
         # according to the paper, we have 4 type of tubes
         self.kernel_sizes = ( # kT, kH, kW
@@ -184,6 +184,7 @@ class TubeViT(nn.Module):
         )
 
         self.pos_embedding = self._generate_position_embedding()
+
         self.pos_embedding = torch.nn.Parameter(self.pos_embedding, requires_grad=False)
         self.register_parameter("pos_embedding", self.pos_embedding)
 
@@ -226,7 +227,7 @@ class TubeViT(nn.Module):
 
         # Attention pooling
         x = self.attention_pooling(x)
-
+        # Dense layer
         x = self.heads(x)
 
         return x
@@ -238,23 +239,28 @@ class TubeViT(nn.Module):
         output = np.floor(
             ((self.video_shape[[1, 2, 3]] - offset - kernel_size) / stride) + 1
         ).astype(int) #THW
-        return output
+        return output # (nT, nH, nW) number of tokens in each dimension
 
     def _generate_position_embedding(self) -> torch.nn.Parameter:
-        position_embedding = [torch.zeros(1, self.hidden_dim)]
+        position_embedding = [torch.zeros(1, self.hidden_dim)] # (1, hidden_dim)
 
-        for i in range(len(self.kernel_sizes)):
-            tube_shape = self._calc_conv_shape(self.kernel_sizes[i], self.strides[i], self.offsets[i])
+        for i in range(len(self.kernel_sizes)): # loop on different tube types
+            tube_shape = self._calc_conv_shape(
+                self.kernel_sizes[i], 
+                self.strides[i], 
+                self.offsets[i]
+            )
             pos_embed = get_3d_sincos_pos_embed(
                 embed_dim=self.hidden_dim,
                 tube_shape=tube_shape,
                 kernel_size=self.kernel_sizes[i],
                 stride=self.strides[i],
                 offset=self.offsets[i],
-            )
+            ) # Returns (num_tokens_i, hidden_dim)
             position_embedding.append(pos_embed)
 
-        position_embedding = torch.cat(position_embedding, dim=0).contiguous()
+        position_embedding = torch.cat(position_embedding, dim=0).contiguous() # (sum(num_tokens_i), hidden_dim)
+        # ensures contiguous memory for efficient computation
         return position_embedding
 
 
@@ -274,9 +280,17 @@ class TubeViTLightningModule(pl.LightningModule):
         label_smoothing: float = 0.0,
         dropout: float = 0.0,
         attention_dropout: float = 0.0,
+        # Additional training parameters to save
+        batch_size: int = None,
+        frames_per_clip: int = None,
+        video_size: tuple = None,
+        num_workers: int = None,
+        seed: int = None,
         **kwargs,
     ):
-        self.save_hyperparameters()
+        # Save all hyperparameters including training config
+        # This automatically generates hparams.yaml in the logs folder
+        self.save_hyperparameters(ignore=['weight_path'])  # Exclude weight_path from hparams
         super().__init__()
         self.num_classes = num_classes
         self.model = TubeViT(
@@ -294,14 +308,14 @@ class TubeViTLightningModule(pl.LightningModule):
         self.loss_func = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
         self.example_input_array = Tensor(1, *video_shape)
 
-        if weight_path is not None:
+        if weight_path is not None: 
             self.model.load_state_dict(torch.load(weight_path), strict=False)
 
-        # Enable gradient checkpointing to save memory
         self.max_epochs = max_epochs
         self.weight_decay = weight_decay
-        if hasattr(self.model, 'encoder'):
-            self.model.encoder.gradient_checkpointing = True
+        # # Enable gradient checkpointing to save memory [SAVE MEMORY BUT SLOW AT BACKWARD PASS]
+        # if hasattr(self.model, 'encoder'):
+        #     self.model.encoder.gradient_checkpointing = True
 
     def forward(self, x):
         return self.model(x)
@@ -344,7 +358,7 @@ class TubeViTLightningModule(pl.LightningModule):
         # Force GPU memory cleanup after training epoch
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-            torch.cuda.synchronize()
+            torch.cuda.synchronize()    
 
     def configure_optimizers(self):
         optimizer = optim.Adam(self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
