@@ -213,7 +213,7 @@ class TubeViT(nn.Module):
         self.heads = nn.Sequential(heads_layers)
 
     def forward(self, x):
-        x = self.sparse_tubes_tokenizer(x)
+        x = self.sparse_tubes_tokenizer(x) # (n, N, hidden_dim)
         n = x.shape[0]
 
         # Expand the class token to the full batch
@@ -235,7 +235,9 @@ class TubeViT(nn.Module):
         kernel_size = np.array(kernel_size)
         stride = np.array(stride)
         offset = np.array(offset)
-        output = np.floor(((self.video_shape[[1, 2, 3]] - offset - kernel_size) / stride) + 1).astype(int)
+        output = np.floor(
+            ((self.video_shape[[1, 2, 3]] - offset - kernel_size) / stride) + 1
+        ).astype(int) #THW
         return output
 
     def _generate_position_embedding(self) -> torch.nn.Parameter:
@@ -294,8 +296,12 @@ class TubeViTLightningModule(pl.LightningModule):
 
         if weight_path is not None:
             self.model.load_state_dict(torch.load(weight_path), strict=False)
+
+        # Enable gradient checkpointing to save memory
         self.max_epochs = max_epochs
         self.weight_decay = weight_decay
+        if hasattr(self.model, 'encoder'):
+            self.model.encoder.gradient_checkpointing = True
 
     def forward(self, x):
         return self.model(x)
@@ -317,11 +323,10 @@ class TubeViTLightningModule(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         x, y = batch
-        y_hat = self(x)
-
-        loss = self.loss_func(y_hat, y)
-
-        y_pred = torch.softmax(y_hat, dim=-1)
+        with torch.no_grad():
+            y_hat = self(x)
+            loss = self.loss_func(y_hat, y)
+            y_pred = torch.softmax(y_hat, dim=-1)
 
         # Logging to TensorBoard by default
         self.log("val_loss", loss, prog_bar=True)

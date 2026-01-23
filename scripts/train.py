@@ -209,6 +209,8 @@ def main(
         fast_dev_run=fast_dev_run,
         logger=logger,
         callbacks=callbacks,
+        precision="16-mixed", # Use mixed precision to halve memory usage
+        limit_val_batches=0.5
     )
     trainer.fit(model, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
     trainer.save_checkpoint("./models/tubevit_ucf101.ckpt")
