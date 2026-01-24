@@ -173,10 +173,10 @@ class RandAugment(nn.Module):
         original_shape = x.shape
         if x.dim() == 4:
             if x.shape[0] == 3:  # (C, T, H, W)
-                x = x.permute(1, 0, 2, 3).contiguous()  # (T, C, H, W)
+                x = x.permute(1, 0, 2, 3)  # (T, C, H, W)
             # Now x is (T, C, H, W)
             T, C, H, W = x.shape
-            x = x.view(T * C, 1, H, W)  # (T*C, 1, H, W) for rotation
+            x = x.contiguous().view(T * C, 1, H, W)  # (T*C, 1, H, W) for rotation
             
             # Create rotation matrix
             angle_rad = angle * 3.14159 / 180.0
@@ -246,10 +246,10 @@ class RandAugment(nn.Module):
             
             original_shape = x.shape
             if x.shape[0] == 3:  # (C, T, H, W)
-                x = x.permute(1, 0, 2, 3).contiguous()  # (T, C, H, W)
+                x = x.permute(1, 0, 2, 3)  # (T, C, H, W)
             
             T, C, H, W = x.shape
-            x_flat = x.view(T * C, 1, H, W)
+            x_flat = x.contiguous().view(T * C, 1, H, W)
             blurred = F.conv2d(x_flat, kernel.expand(1, -1, -1, -1), padding=1)
             blurred = blurred.view(T, C, H, W)
             
@@ -289,10 +289,10 @@ class RandAugment(nn.Module):
         if x.dim() == 4:
             original_shape = x.shape
             if x.shape[0] == 3:  # (C, T, H, W)
-                x = x.permute(1, 0, 2, 3).contiguous()  # (T, C, H, W)
+                x = x.permute(1, 0, 2, 3)  # (T, C, H, W)
             
             T, C, H, W = x.shape
-            x = x.view(T * C, 1, H, W)
+            x = x.contiguous().view(T * C, 1, H, W)
             
             theta = torch.tensor([matrix], dtype=x.dtype, device=x.device)
             theta = theta.expand(T * C, -1, -1)
