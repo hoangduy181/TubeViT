@@ -1,12 +1,11 @@
+# Add parent directory to path
 import sys
 from pathlib import Path
-
-from utils.constant import IMAGENET_MEAN, IMAGENET_STD
-
-# Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import os
 import pickle
+from utils.constant import IMAGENET_MEAN, IMAGENET_STD
 
 
 import click
