@@ -162,11 +162,20 @@ class GPUMonitorCallback(Callback):
         if stats:
             print(f"\n[GPU Monitor] Validation End (Epoch {trainer.current_epoch}):")
             print(self._format_gpu_stats(stats, "  "))
-            # Log validation GPU stats
-            for gpu_name, gpu_stats in stats.items():
-                gpu_id = gpu_name.split('_')[1]
-                pl_module.log(f"gpu_{gpu_id}/val_memory_allocated_gb", gpu_stats['allocated_gb'], on_step=False, on_epoch=True)
-                pl_module.log(f"gpu_{gpu_id}/val_memory_reserved_gb", gpu_stats['reserved_gb'], on_step=False, on_epoch=True)
+            # Log validation GPU stats (can't use pl_module.log here)
+            if trainer.logger and hasattr(trainer.logger, "experiment") and trainer.is_global_zero:
+                for gpu_name, gpu_stats in stats.items():
+                    gpu_id = gpu_name.split('_')[1]
+                    trainer.logger.experiment.add_scalar(
+                        f"gpu_{gpu_id}/val_memory_allocated_gb",
+                        gpu_stats["allocated_gb"],
+                        trainer.global_step,
+                    )
+                    trainer.logger.experiment.add_scalar(
+                        f"gpu_{gpu_id}/val_memory_reserved_gb",
+                        gpu_stats["reserved_gb"],
+                        trainer.global_step,
+                    )
     
     def on_train_start(self, trainer, pl_module):
         """Print initial GPU stats at training start"""
