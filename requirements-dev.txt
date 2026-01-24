@@ -1,3 +1,13 @@
-black
-ruff
-isort
+# black
+# ruff
+# isort
+click~=8.3.1
+torch~=2.2.0
+torchvision~=0.17.0
+lightning~=2.6.0
+torchmetrics~=1.8.2
+# pytorchvideo==0.1.5  # DEPRECATED: Replaced by internal modules in tubevit/transforms.py and tubevit/video_loader.py
+matplotlib~=3.10.8
+seaborn~=0.13.2
+numpy<2.0
+tensorboard~=2.15.0

@@ -1,11 +1,12 @@
 import click
 import torch
-from pytorchvideo.data.encoded_video import EncodedVideo
-from pytorchvideo.transforms import ApplyTransformToKey, UniformTemporalSubsample, ShortSideScale
+from tubevit.video_loader import EncodedVideo
+from tubevit.transforms import ApplyTransformToKey, UniformTemporalSubsample, ShortSideScale
 from torchvision.transforms import Compose, Lambda
 from torchvision.transforms._transforms_video import NormalizeVideo, CenterCropVideo
 
 from tubevit.model import TubeViTLightningModule
+from utils.constant import IMAGENET_MEAN, IMAGENET_STD
 
 # Enable Tensor Core optimization for NVIDIA GPUs with Tensor Cores (e.g., A100, V100, etc.)
 # 'medium' provides a good balance between performance and precision
@@ -38,8 +39,8 @@ def main(
                 UniformTemporalSubsample(frames_per_clip),
                 Lambda(lambda x: x / 255.0),
                 NormalizeVideo(
-                    mean=[0.485, 0.456, 0.406], 
-                    std=[0.229, 0.224, 0.225]
+                    mean=IMAGENET_MEAN, 
+                    std=IMAGENET_STD
                 ),
                 ShortSideScale(
                     size=video_size[0]
@@ -64,10 +65,26 @@ def main(
             video_data.append(data['video'])
 
     video_data = torch.stack(video_data)
+    print(f"Video data shape: {video_data.shape}")
+    
+    # Load model from checkpoint
+    # Works with both .ckpt and .pt files (if .pt was saved as full checkpoint)
     model = TubeViTLightningModule.load_from_checkpoint(model_path)
-    prediction = model.predict_step(batch=(video_data, None), batch_idx=0)
-    print(video_data.shape)
-    print('Predict:', labels[torch.argmax(torch.sum(prediction['y_prob'], dim=0)).to('cpu').item()])
+    model.eval()  # Set to evaluation mode (disables dropout, batch norm updates, etc.)
+    
+    # Run inference with no gradient computation (saves memory and speeds up inference)
+    with torch.no_grad():
+        prediction = model.predict_step(batch=(video_data, None), batch_idx=0)
+    
+    # Aggregate predictions across all clips and get the final prediction
+    # prediction['y_prob'] shape: (num_clips, num_classes)
+    aggregated_prob = torch.sum(prediction['y_prob'], dim=0)  # Sum across clips: (num_classes,)
+    predicted_class_idx = torch.argmax(aggregated_prob).item()
+    predicted_label = labels[predicted_class_idx]
+    
+    print(f"Predicted class index: {predicted_class_idx}")
+    print(f"Predicted label: {predicted_label}")
+    print(f"Confidence: {aggregated_prob[predicted_class_idx].item():.4f}")
 
 
 if __name__ == "__main__":

@@ -6,7 +6,8 @@ import matplotlib.pyplot as plt
 import pytorch_lightning as pl
 import seaborn as sns
 import torch
-from pytorchvideo.transforms import Normalize
+from tubevit.transforms import Normalize
+
 from torch.utils.data import DataLoader, RandomSampler
 from torchmetrics.functional import accuracy, auroc, confusion_matrix, f1_score
 from torchvision.transforms import transforms as T
@@ -14,6 +15,7 @@ from torchvision.transforms._transforms_video import ToTensorVideo
 
 from tubevit.dataset import MyUCF101
 from tubevit.model import TubeViTLightningModule
+from utils.constant import IMAGENET_MEAN, IMAGENET_STD
 
 # Enable Tensor Core optimization for NVIDIA GPUs with Tensor Cores (e.g., A100, V100, etc.)
 # 'medium' provides a good balance between performance and precision
@@ -61,7 +63,7 @@ def main(
         [
             ToTensorVideo(),
             T.Resize(size=video_size, antialias=True),
-            Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
         ]
     )
 

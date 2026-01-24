@@ -4,12 +4,13 @@ import pickle
 import click
 import matplotlib.pyplot as plt
 import pytorch_lightning as pl
-from pytorchvideo.transforms import Normalize, Permute, RandAugment
+from tubevit.transforms import Normalize, Permute, RandAugment
 from torch.utils.data import DataLoader, RandomSampler
 from torchvision.transforms import transforms as T
 from torchvision.transforms._transforms_video import ToTensorVideo
 
 from tubevit.dataset import MyUCF101
+from utils.constant import IMAGENET_MEAN, IMAGENET_STD
 
 
 @click.command()
@@ -33,9 +34,6 @@ def main(dataset_root, video_size, annotation_path, label_path, frames_per_clip,
         labels = f.read().splitlines()
         labels = list(map(lambda x: x.split(" ")[-1], labels))
 
-    imagenet_mean = [0.485, 0.456, 0.406]
-    imagenet_std = [0.229, 0.224, 0.225]
-
     train_transform = T.Compose(
         [
             ToTensorVideo(),  # C, T, H, W
@@ -43,7 +41,7 @@ def main(dataset_root, video_size, annotation_path, label_path, frames_per_clip,
             RandAugment(magnitude=10, num_layers=2),
             Permute(dims=[1, 0, 2, 3]),  # C, T, H, W
             T.Resize(size=video_size, antialias=True),
-            Normalize(mean=imagenet_mean, std=imagenet_std),
+            Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
         ]
     )
 

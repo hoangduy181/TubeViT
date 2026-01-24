@@ -1,6 +1,8 @@
 import sys
 from pathlib import Path
 
+from utils.constant import IMAGENET_MEAN, IMAGENET_STD
+
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import os
@@ -12,7 +14,7 @@ import lightning.pytorch as pl
 import matplotlib.pyplot as plt
 import torch
 from lightning.pytorch.loggers import TensorBoardLogger
-from pytorchvideo.transforms import Normalize, Permute, RandAugment
+from tubevit.transforms import Normalize, Permute, RandAugment
 from torch.utils.data import DataLoader
 from torchvision.transforms import transforms as T
 from torchvision.transforms._transforms_video import ToTensorVideo
@@ -60,9 +62,6 @@ def main(
         num_workers = os.cpu_count() or 0
         print(f"Using {num_workers} DataLoader workers (auto-detected from CPU count)")
 
-    imagenet_mean = [0.485, 0.456, 0.406]
-    imagenet_std = [0.229, 0.224, 0.225]
-
     train_transform = T.Compose(
         [
             ToTensorVideo(),  # C, T, H, W
@@ -70,7 +69,7 @@ def main(
             RandAugment(magnitude=10, num_layers=2),
             Permute(dims=[1, 0, 2, 3]),  # C, T, H, W
             T.Resize(size=video_size, antialias=True),
-            Normalize(mean=imagenet_mean, std=imagenet_std),
+            Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
         ]
     )
 
@@ -78,7 +77,7 @@ def main(
         [
             ToTensorVideo(),
             T.Resize(size=video_size, antialias=True),
-            Normalize(mean=imagenet_mean, std=imagenet_std),
+            Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
         ]
     )
 
