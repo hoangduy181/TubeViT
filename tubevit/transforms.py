@@ -7,7 +7,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.transforms import functional as TF
 from typing import List, Tuple, Optional, Callable, Any
-from utils.constant import IMAGENET_MEAN, IMAGENET_STD
+
+# ImageNet normalization constants
+IMAGENET_MEAN = [0.485, 0.456, 0.406]
+IMAGENET_STD = [0.229, 0.224, 0.225]
 
 
 class Normalize(nn.Module):
@@ -170,7 +173,7 @@ class RandAugment(nn.Module):
         original_shape = x.shape
         if x.dim() == 4:
             if x.shape[0] == 3:  # (C, T, H, W)
-                x = x.permute(1, 0, 2, 3)  # (T, C, H, W)
+                x = x.permute(1, 0, 2, 3).contiguous()  # (T, C, H, W)
             # Now x is (T, C, H, W)
             T, C, H, W = x.shape
             x = x.view(T * C, 1, H, W)  # (T*C, 1, H, W) for rotation
@@ -243,7 +246,7 @@ class RandAugment(nn.Module):
             
             original_shape = x.shape
             if x.shape[0] == 3:  # (C, T, H, W)
-                x = x.permute(1, 0, 2, 3)  # (T, C, H, W)
+                x = x.permute(1, 0, 2, 3).contiguous()  # (T, C, H, W)
             
             T, C, H, W = x.shape
             x_flat = x.view(T * C, 1, H, W)
@@ -286,7 +289,7 @@ class RandAugment(nn.Module):
         if x.dim() == 4:
             original_shape = x.shape
             if x.shape[0] == 3:  # (C, T, H, W)
-                x = x.permute(1, 0, 2, 3)  # (T, C, H, W)
+                x = x.permute(1, 0, 2, 3).contiguous()  # (T, C, H, W)
             
             T, C, H, W = x.shape
             x = x.view(T * C, 1, H, W)

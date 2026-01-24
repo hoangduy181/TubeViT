@@ -7,3 +7,4 @@ pytorchvideo==0.1.5
 matplotlib~=3.7.2
 seaborn~=0.12.2
 tensorboard~=2.15.0
+av  # PyAV - required for torchvision video operations

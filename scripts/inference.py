@@ -1,3 +1,8 @@
+# Add parent directory to path
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import click
 import torch
 from tubevit.video_loader import EncodedVideo

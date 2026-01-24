@@ -11,3 +11,4 @@ matplotlib~=3.10.8
 seaborn~=0.13.2
 numpy<2.0
 tensorboard~=2.15.0
+av=
