@@ -141,11 +141,12 @@ class RandAugment(nn.Module):
         else:
             return x
     
-    def _autocontrast(self, x: torch.Tensor) -> torch.Tensor:
+    def _autocontrast(self, x: torch.Tensor, magnitude: float) -> torch.Tensor:
         """
         Autocontrast operation - normalize each channel to [0, 1] based on min/max.
         Args:
             x: Video tensor of shape (T, C, H, W)
+            magnitude: Magnitude parameter (0.0-1.0), not used but required for signature
         """
         if x.dim() == 4 and x.shape[1] == 3:  # (T, C, H, W) with C=3
             T, C, H, W = x.shape
@@ -157,11 +158,11 @@ class RandAugment(nn.Module):
                     x[:, c, :, :] = (channel - min_val) / (max_val - min_val)
         return x
     
-    def _equalize(self, x: torch.Tensor) -> torch.Tensor:
+    def _equalize(self, x: torch.Tensor, magnitude: float) -> torch.Tensor:
         """Histogram equalization (simplified)."""
         # Simplified version - full histogram equalization is complex
         # For now, use a contrast enhancement approximation
-        return self._autocontrast(x)
+        return self._autocontrast(x, magnitude)
     
     def _rotate(self, x: torch.Tensor, magnitude: float) -> torch.Tensor:
         """Rotate by angle in degrees."""
