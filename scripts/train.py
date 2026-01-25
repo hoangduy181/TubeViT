@@ -163,15 +163,17 @@ def main(
     )
     print(f"✓ Training DataLoader created: {len(train_dataloader)} batches")
 
+    # Use smaller batch size for validation to prevent OOM
+    val_batch_size = max(1, batch_size // 2)  # Half the training batch size
     val_dataloader = DataLoader(
         val_set,
-        batch_size=batch_size,
+        batch_size=val_batch_size,
         num_workers=num_workers,
         shuffle=False,
-        drop_last=True,
-        pin_memory=True,
+        drop_last=False,  # Don't drop last batch in validation
+        pin_memory=False,  # Disable pin_memory for validation to save memory
     )
-    print(f"✓ Validation DataLoader created: {len(val_dataloader)} batches")
+    print(f"✓ Validation DataLoader created: {len(val_dataloader)} batches (batch_size={val_batch_size})")
 
     print("\nTesting data loading...")
     x, y = next(iter(train_dataloader))
@@ -231,7 +233,8 @@ def main(
         logger=logger,
         callbacks=callbacks,
         precision="16-mixed", # Use mixed precision to halve memory usage
-        limit_val_batches=0.5
+        limit_val_batches=0.2,  # Only validate on 20% of validation set to prevent OOM
+        val_check_interval=1.0,  # Validate after each epoch
     )
     trainer.fit(model, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
     trainer.save_checkpoint("./models/tubevit_ucf101.ckpt")

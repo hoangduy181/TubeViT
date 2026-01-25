@@ -348,7 +348,7 @@ class TubeViTLightningModule(pl.LightningModule):
         self.log("val_f1", f1_score(y_pred, y, task="multiclass", num_classes=self.num_classes), prog_bar=True)
         
         # Periodically clear GPU cache during validation to prevent OOM
-        if batch_idx % 20 == 0 and torch.cuda.is_available():
+        if batch_idx % 10 == 0 and torch.cuda.is_available():  # Clear more frequently
             torch.cuda.empty_cache()
 
         return loss
@@ -358,7 +358,15 @@ class TubeViTLightningModule(pl.LightningModule):
         # Force GPU memory cleanup after training epoch
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-            torch.cuda.synchronize()    
+            torch.cuda.synchronize()
+    
+    def on_validation_epoch_start(self) -> None:
+        """Clear GPU cache before validation to prevent OOM"""
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            # Reset peak memory stats for validation
+            torch.cuda.reset_peak_memory_stats()    
 
     def configure_optimizers(self):
         optimizer = optim.Adam(self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
