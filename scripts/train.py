@@ -89,7 +89,7 @@ def main(
     print(f"Video size: {video_size}")
     print(f"Batch size: {batch_size}")
     
-    train_metadata_file = "ucf101-train-meta.pickle"
+    train_metadata_file =  "ucf101-train-meta.pickle"
     train_precomputed_metadata = None
     if os.path.exists(train_metadata_file):
         print(f"Loading precomputed metadata from {train_metadata_file}...")
@@ -222,11 +222,38 @@ def main(
     ]
     logger = TensorBoardLogger("logs", name="TubeViT")
 
+    gpu_count = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    print(f"\n{'='*60}")
+    print("GPU Detection")
+    print(f"{'='*60}")
+    print(f"CUDA Available: {torch.cuda.is_available()}")
+    print(f"GPU Count: {gpu_count}")
+    
+    if gpu_count > 0:
+        for i in range(gpu_count):
+            props = torch.cuda.get_device_properties(i)
+            print(f"  GPU {i}: {props.name} ({props.total_memory / 1024**3:.2f} GB)")
+    
+    if gpu_count > 1:
+        devices = -1  # Use all GPUs
+        strategy = "ddp"  # Distributed Data Parallel
+        print(f"\nUsing multi-GPU training: {gpu_count} GPUs with DDP strategy")
+    elif gpu_count == 1:
+        devices = 1
+        strategy = "auto"
+        print(f"\nUsing single-GPU training")
+    else:
+        devices = "auto"
+        strategy = "auto"
+        print(f"\nUsing CPU training")
+
+    print(f"Trainer setup: accelerator=auto, devices={devices}, strategy={strategy}")
+    print(f"{'='*60}\n")
     trainer = pl.Trainer(
         max_epochs=max_epochs,
         accelerator="auto",
-        devices=-1,  # Use all available GPUs
-        strategy="ddp",  # Distributed Data Parallel for multi-GPU training
+        devices=devices,
+        strategy=strategy,
         fast_dev_run=fast_dev_run,
         logger=logger,
         callbacks=callbacks,

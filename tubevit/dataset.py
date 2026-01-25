@@ -16,7 +16,7 @@ class MyUCF101(UCF101):
         annotation_path = kwargs.get('annotation_path', args[1] if len(args) > 1 else None)
         train = kwargs.get('train', True)
         
-        print(f"[MyUCF101] Initializing dataset...")
+        print(f"✨ [MyUCF101] Initializing dataset...")
         print(f"  Root: {root}")
         print(f"  Annotation path: {annotation_path}")
         print(f"  Train: {train}")

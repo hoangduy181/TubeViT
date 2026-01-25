@@ -343,9 +343,19 @@ class TubeViTLightningModule(pl.LightningModule):
             y_pred = torch.softmax(y_hat, dim=-1)
 
         # Logging to TensorBoard by default
-        self.log("val_loss", loss, prog_bar=True)
-        self.log("val_acc", accuracy(y_pred, y, task="multiclass", num_classes=self.num_classes), prog_bar=True)
-        self.log("val_f1", f1_score(y_pred, y, task="multiclass", num_classes=self.num_classes), prog_bar=True)
+        self.log("val_loss", loss, prog_bar=True, sync_dist=True)
+        self.log(
+            "val_acc",
+            accuracy(y_pred, y, task="multiclass", num_classes=self.num_classes),
+            prog_bar=True,
+            sync_dist=True,
+        )
+        self.log(
+            "val_f1",
+            f1_score(y_pred, y, task="multiclass", num_classes=self.num_classes),
+            prog_bar=True,
+            sync_dist=True,
+        )
         
         # Periodically clear GPU cache during validation to prevent OOM
         if batch_idx % 20 == 0 and torch.cuda.is_available():
