@@ -3,7 +3,7 @@ import pickle
 
 import click
 import matplotlib.pyplot as plt
-import pytorch_lightning as pl
+import lightning.pytorch as pl
 from pytorchvideo.transforms import Normalize, Permute, RandAugment
 from torch.utils.data import DataLoader, RandomSampler
 from torchvision.transforms import transforms as T

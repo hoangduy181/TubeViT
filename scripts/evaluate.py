@@ -3,7 +3,7 @@ import pickle
 
 import click
 import matplotlib.pyplot as plt
-import pytorch_lightning as pl
+import lightning.pytorch as pl
 import seaborn as sns
 import torch
 from pytorchvideo.transforms import Normalize
