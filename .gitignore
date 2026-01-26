@@ -146,3 +146,8 @@ data/
 
 # customs
 *.tmp.ipynb
+
+models/
+
+# ignore model weight
+*.ckpt
