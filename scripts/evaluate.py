@@ -92,13 +92,18 @@ def main(
         with open(val_metadata_file, "wb") as f:
             pickle.dump(val_set.metadata, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-    val_sampler = RandomSampler(val_set, num_samples=len(val_set) // 5000)
+    # Use a reasonable sample size for evaluation (or use all samples)
+    # For proper evaluation, use all validation samples or at least 1000+
+    eval_sample_size = min(len(val_set), max(1000, len(val_set) // 10))  # At least 1000 samples or 10% of dataset
+    print(f"Evaluating on {eval_sample_size} samples (out of {len(val_set)} total validation samples)")
+    
+    val_sampler = RandomSampler(val_set, num_samples=eval_sample_size)
     val_dataloader = DataLoader(
         val_set,
         batch_size=batch_size,
         num_workers=num_workers,
         shuffle=False,
-        drop_last=True,
+        drop_last=False,  # Don't drop last batch in evaluation
         sampler=val_sampler,
     )
 
@@ -114,10 +119,32 @@ def main(
     y_pred = torch.cat([item["y_pred"] for item in predictions])
     y_prob = torch.cat([item["y_prob"] for item in predictions])
 
-    print("accuracy:", accuracy(y_prob, y, task="multiclass", num_classes=num_classes))
-    print("accuracy_top5:", accuracy(y_prob, y, task="multiclass", num_classes=num_classes, top_k=5))
-    print("auroc:", auroc(y_prob, y, task="multiclass", num_classes=num_classes))
-    print("f1_score:", f1_score(y_prob, y, task="multiclass", num_classes=num_classes))
+    print(f"\n{'='*60}")
+    print("Evaluation Results")
+    print(f"{'='*60}")
+    print(f"Total samples evaluated: {len(y)}")
+    print(f"Unique classes in evaluation set: {len(torch.unique(y))}")
+    
+    acc = accuracy(y_prob, y, task="multiclass", num_classes=num_classes)
+    acc_top5 = accuracy(y_prob, y, task="multiclass", num_classes=num_classes, top_k=5)
+    f1 = f1_score(y_prob, y, task="multiclass", num_classes=num_classes)
+    
+    print(f"Accuracy: {acc:.4f} ({acc*100:.2f}%)")
+    print(f"Top-5 Accuracy: {acc_top5:.4f} ({acc_top5*100:.2f}%)")
+    print(f"F1 Score: {f1:.4f} ({f1*100:.2f}%)")
+    
+    # AUROC calculation - only compute if we have enough samples per class
+    unique_classes = torch.unique(y)
+    if len(unique_classes) >= 2 and len(y) >= 100:  # Need at least 2 classes and 100 samples for meaningful AUROC
+        try:
+            auroc_score = auroc(y_prob, y, task="multiclass", num_classes=num_classes, average="macro")
+            print(f"AUROC (macro): {auroc_score:.4f}")
+        except Exception as e:
+            print(f"AUROC calculation failed: {e}")
+            print("  (This is normal with very small evaluation sets or class imbalance)")
+    else:
+        print(f"AUROC: Skipped (need at least 2 classes and 100 samples for reliable AUROC)")
+        print(f"  Current: {len(unique_classes)} classes, {len(y)} samples")
 
     cm = confusion_matrix(y_pred, y, task="multiclass", num_classes=num_classes)
 
