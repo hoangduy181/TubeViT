@@ -8,6 +8,7 @@ import pickle
 import json
 import csv
 import shutil
+import time
 from datetime import datetime
 
 import click
@@ -169,24 +170,18 @@ def main(
         with open(val_metadata_file, "wb") as f:
             pickle.dump(val_set.metadata, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-    # Use a reasonable sample size for evaluation (or use all samples)
-    # For proper evaluation, use all validation samples or at least 1000+
-    eval_sample_size = min(len(val_set), max(1000, len(val_set) // 10))  # At least 1000 samples or 10% of dataset
-    print(f"Evaluating on {eval_sample_size} samples (out of {len(val_set)} total validation samples)")
+    # Always use full validation set for evaluation
+    actual_dataset_size = len(val_set)
+    print(f"Dataset info:")
+    print(f"  Total clips in validation set: {actual_dataset_size}")
+    print(f"  Evaluating on: {actual_dataset_size} samples (full dataset)")
+    print(f"  Dataset has {len(val_set.indices)} clip indices")
+    print(f"  Dataset has {len(val_set.samples)} video samples")
     
     # Use SequentialSampler for deterministic evaluation (no shuffling)
-    # Create a subset by taking first N indices
-    from torch.utils.data import Subset
-    if eval_sample_size < len(val_set):
-        # Create subset with first eval_sample_size samples
-        indices = list(range(eval_sample_size))
-        val_subset = Subset(val_set, indices)
-        val_sampler = None  # No sampler needed, Subset handles indexing
-        val_dataset = val_subset
-    else:
-        # Use full dataset
-        val_sampler = SequentialSampler(val_set)
-        val_dataset = val_set
+    # Always use full dataset - no subsetting
+    val_sampler = SequentialSampler(val_set)
+    val_dataset = val_set
     
     val_dataloader = DataLoader(
         val_dataset,
@@ -194,74 +189,127 @@ def main(
         num_workers=num_workers,
         shuffle=False,  # No shuffling for evaluation
         drop_last=False,  # Don't drop last batch in evaluation
-        sampler=val_sampler,  # None if using Subset, SequentialSampler if using full dataset
+        sampler=val_sampler,
     )
 
     x, y = next(iter(val_dataloader))
     print(x.shape)
 
     model = TubeViTLightningModule.load_from_checkpoint(model_path)
+    model.eval()  # Set to evaluation mode
+    
+    # Calculate FLOPS using fvcore or thop if available
+    flops_count = None
+    try:
+        try:
+            from fvcore.nn import FlopCountMode, flop_count
+            # Create a dummy input with the same shape as actual input
+            dummy_input = torch.randn(1, *x.shape[1:]).to(next(model.parameters()).device)
+            flops_dict, _ = flop_count(model.model, (dummy_input,), mode=FlopCountMode.OPERATION_COUNT)
+            flops_count = sum(flops_dict.values())
+            print(f"\n{'='*60}")
+            print("Model FLOPS Calculation")
+            print(f"{'='*60}")
+            print(f"FLOPS: {flops_count / 1e9:.2f} GFLOPs")
+        except ImportError:
+            try:
+                from thop import profile, clever_format
+                dummy_input = torch.randn(1, *x.shape[1:]).to(next(model.parameters()).device)
+                flops, params = profile(model.model, inputs=(dummy_input,), verbose=False)
+                flops_count = flops
+                print(f"\n{'='*60}")
+                print("Model FLOPS Calculation")
+                print(f"{'='*60}")
+                print(f"FLOPS: {flops / 1e9:.2f} GFLOPs")
+                print(f"Parameters: {params / 1e6:.2f} M")
+            except ImportError:
+                print("\nNote: Install 'fvcore' or 'thop' to calculate FLOPS:")
+                print("  pip install fvcore")
+                print("  or")
+                print("  pip install thop")
+    except Exception as e:
+        print(f"Warning: Could not calculate FLOPS: {e}")
 
+    # Measure inference time and calculate FPS
+    print(f"\n{'='*60}")
+    print("Starting Evaluation (measuring FPS)...")
+    print(f"{'='*60}")
+    
+    start_time = time.time()
     trainer = pl.Trainer(accelerator="auto", default_root_dir="lightning_predict_logs")
     predictions = trainer.predict(model, dataloaders=val_dataloader)
-
+    end_time = time.time()
+    
     y = torch.cat([item["y"] for item in predictions])
     y_pred = torch.cat([item["y_pred"] for item in predictions])
     y_prob = torch.cat([item["y_prob"] for item in predictions])
     
+    # Calculate performance metrics
+    total_time = end_time - start_time
+    total_frames = len(y) * frames_per_clip  # Total frames processed
+    fps = total_frames / total_time if total_time > 0 else 0
+    samples_per_sec = len(y) / total_time if total_time > 0 else 0
+    
+    print(f"\n{'='*60}")
+    print("Performance Metrics")
+    print(f"{'='*60}")
+    print(f"Total inference time: {total_time:.2f} seconds")
+    print(f"Total samples processed: {len(y)}")
+    print(f"Total frames processed: {total_frames}")
+    print(f"FPS (frames per second): {fps:.2f}")
+    print(f"Samples per second: {samples_per_sec:.2f}")
+    print(f"Time per sample: {total_time / len(y) * 1000:.2f} ms" if len(y) > 0 else "N/A")
+    
     # Get confidence scores (max probability)
     confidences = torch.max(y_prob, dim=1)[0].cpu().numpy()
     
-    # Get video paths from dataset - collect them by iterating through dataloader
-    # This ensures we get paths in the same order as predictions
+    # Get video paths from dataset - use actual indices from the dataset
+    # The predictions are in the same order as the dataloader iterations
     video_paths = []
-    sample_idx = 0
+    actual_num_samples = len(y)
+    actual_dataset_len = len(val_set)  # Full dataset size
     
-    print("Collecting video paths...")
-    for batch_idx, (batch_x, batch_y) in enumerate(val_dataloader):
-        batch_size_current = batch_x.shape[0]
-        for i in range(batch_size_current):
-            try:
-                # Calculate the dataset index for this sample
-                if isinstance(val_dataset, Subset):
-                    # Get the clip index from the subset
-                    clip_idx = val_dataset.indices[sample_idx]
-                else:
-                    # Direct access
-                    clip_idx = sample_idx
-                
-                # Safety check: ensure clip_idx is within bounds
-                if clip_idx >= len(val_set.indices):
-                    print(f"Warning: clip_idx {clip_idx} >= len(val_set.indices) {len(val_set.indices)}")
-                    video_paths.append(f"unknown_video_{sample_idx}.avi")
-                    sample_idx += 1
-                    continue
-                
-                # Map clip index to video index
-                video_idx = val_set.indices[clip_idx]
-                
-                # Safety check: ensure video_idx is within bounds
-                if video_idx >= len(val_set.samples):
-                    print(f"Warning: video_idx {video_idx} >= len(val_set.samples) {len(val_set.samples)}")
-                    video_paths.append(f"unknown_video_{sample_idx}.avi")
-                    sample_idx += 1
-                    continue
-                
-                video_path, _ = val_set.samples[video_idx]
-                
-                # Convert to absolute path if relative
-                if not os.path.isabs(video_path):
-                    video_path = os.path.join(val_set.root, video_path)
-                video_paths.append(video_path)
-                sample_idx += 1
-                
-            except (IndexError, KeyError, AttributeError) as e:
-                print(f"Warning: Could not get video path for sample {sample_idx}: {e}")
+    print(f"Collecting video paths...")
+    print(f"  Predictions: {actual_num_samples}, Dataset size: {actual_dataset_len}")
+    
+    # Collect paths for all samples (using full dataset)
+    for sample_idx in range(actual_num_samples):
+        try:
+            # Direct access to dataset (no subset, always full dataset)
+            if sample_idx >= len(val_set):
+                print(f"Warning: sample_idx {sample_idx} >= len(val_set) {len(val_set)}")
                 video_paths.append(f"unknown_video_{sample_idx}.avi")
-                sample_idx += 1
+                continue
+            
+            clip_idx = sample_idx
+            
+            # Safety check: ensure clip_idx is within bounds of val_set.indices
+            if clip_idx >= len(val_set.indices):
+                print(f"Warning: clip_idx {clip_idx} >= len(val_set.indices) {len(val_set.indices)} (sample_idx={sample_idx})")
+                video_paths.append(f"unknown_video_{sample_idx}.avi")
+                continue
+            
+            # Map clip index to video index using val_set.indices
+            video_idx = val_set.indices[clip_idx]
+            
+            # Safety check: ensure video_idx is within bounds
+            if video_idx >= len(val_set.samples):
+                print(f"Warning: video_idx {video_idx} >= len(val_set.samples) {len(val_set.samples)}")
+                video_paths.append(f"unknown_video_{sample_idx}.avi")
+                continue
+            
+            video_path, _ = val_set.samples[video_idx]
+            
+            # Convert to absolute path if relative
+            if not os.path.isabs(video_path):
+                video_path = os.path.join(val_set.root, video_path)
+            video_paths.append(video_path)
+            
+        except (IndexError, KeyError, AttributeError) as e:
+            print(f"Warning: Could not get video path for sample {sample_idx}: {e}")
+            video_paths.append(f"unknown_video_{sample_idx}.avi")
     
     # Ensure we have the same number of video paths as predictions
-    actual_num_samples = len(y)
     if len(video_paths) != actual_num_samples:
         print(f"Warning: Mismatch between predictions ({actual_num_samples}) and video paths ({len(video_paths)})")
         # Pad or truncate to match
@@ -313,13 +361,23 @@ def main(
         "accuracy_top5": float(acc_top5.item()),
         "f1_score": float(f1.item()),
         "auroc_macro": float(auroc_score.item()) if auroc_score is not None else None,
+        "performance": {
+            "total_inference_time_seconds": total_time,
+            "total_frames_processed": total_frames,
+            "fps": fps,
+            "samples_per_second": samples_per_sec,
+            "time_per_sample_ms": total_time / len(y) * 1000 if len(y) > 0 else None,
+        },
+        "model_complexity": {
+            "flops_gflops": flops_count / 1e9 if flops_count is not None else None,
+        },
         "evaluation_config": {
             "batch_size": batch_size,
             "frames_per_clip": frames_per_clip,
             "video_size": video_size,
             "num_workers": num_workers,
             "seed": seed,
-            "eval_sample_size": eval_sample_size,
+            "eval_sample_size": actual_dataset_size,  # Always use full dataset
         }
     }
     
@@ -350,6 +408,15 @@ def main(
             f.write(f"AUROC (macro): {auroc_score:.4f}\n")
         else:
             f.write(f"AUROC: Skipped (need at least 2 classes and 100 samples)\n")
+        f.write(f"\n{'='*60}\n")
+        f.write("Performance\n")
+        f.write(f"{'='*60}\n")
+        f.write(f"Total inference time: {total_time:.2f} seconds\n")
+        f.write(f"FPS (frames per second): {fps:.2f}\n")
+        f.write(f"Samples per second: {samples_per_sec:.2f}\n")
+        f.write(f"Time per sample: {total_time / len(y) * 1000:.2f} ms\n" if len(y) > 0 else "N/A\n")
+        if flops_count is not None:
+            f.write(f"Model FLOPS: {flops_count / 1e9:.2f} GFLOPs\n")
         f.write(f"\n{'='*60}\n")
         f.write("Configuration\n")
         f.write(f"{'='*60}\n")

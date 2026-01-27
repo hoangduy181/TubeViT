@@ -4,6 +4,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import click
+import time
 import torch
 from tubevit.video_loader import EncodedVideo
 from tubevit.transforms import ApplyTransformToKey, UniformTemporalSubsample, ShortSideScale
@@ -77,9 +78,49 @@ def main(
     model = TubeViTLightningModule.load_from_checkpoint(model_path)
     model.eval()  # Set to evaluation mode (disables dropout, batch norm updates, etc.)
     
-    # Run inference with no gradient computation (saves memory and speeds up inference)
+    # Calculate FLOPS if possible
+    flops_count = None
+    try:
+        try:
+            from fvcore.nn import FlopCountMode, flop_count
+            dummy_input = torch.randn(1, *video_data.shape[1:]).to(next(model.parameters()).device)
+            flops_dict, _ = flop_count(model.model, (dummy_input,), mode=FlopCountMode.OPERATION_COUNT)
+            flops_count = sum(flops_dict.values())
+        except ImportError:
+            try:
+                from thop import profile
+                dummy_input = torch.randn(1, *video_data.shape[1:]).to(next(model.parameters()).device)
+                flops, params = profile(model.model, inputs=(dummy_input,), verbose=False)
+                flops_count = flops
+            except ImportError:
+                pass
+    except Exception:
+        pass
+    
+    if flops_count is not None:
+        print(f"\n{'='*60}")
+        print("Model Complexity")
+        print(f"{'='*60}")
+        print(f"FLOPS: {flops_count / 1e9:.2f} GFLOPs")
+    
+    # Measure inference time
+    print(f"\n{'='*60}")
+    print("Running Inference...")
+    print(f"{'='*60}")
+    
+    # Warmup
+    with torch.no_grad():
+        _ = model.predict_step(batch=(video_data[:1], None), batch_idx=0)
+    
+    # Actual inference with timing
+    start_time = time.time()
     with torch.no_grad():
         prediction = model.predict_step(batch=(video_data, None), batch_idx=0)
+    end_time = time.time()
+    
+    inference_time = end_time - start_time
+    total_frames = video_data.shape[0] * frames_per_clip
+    fps = total_frames / inference_time if inference_time > 0 else 0
     
     # Aggregate predictions across all clips and get the final prediction
     # prediction['y_prob'] shape: (num_clips, num_classes)
@@ -87,9 +128,19 @@ def main(
     predicted_class_idx = torch.argmax(aggregated_prob).item()
     predicted_label = labels[predicted_class_idx]
     
+    print(f"\n{'='*60}")
+    print("Results")
+    print(f"{'='*60}")
     print(f"Predicted class index: {predicted_class_idx}")
     print(f"Predicted label: {predicted_label}")
     print(f"Confidence: {aggregated_prob[predicted_class_idx].item():.4f}")
+    print(f"\n{'='*60}")
+    print("Performance")
+    print(f"{'='*60}")
+    print(f"Inference time: {inference_time:.3f} seconds")
+    print(f"Total frames processed: {total_frames}")
+    print(f"FPS (frames per second): {fps:.2f}")
+    print(f"Time per clip: {inference_time / video_data.shape[0] * 1000:.2f} ms")
 
 
 if __name__ == "__main__":
