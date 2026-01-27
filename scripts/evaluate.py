@@ -201,8 +201,8 @@ def main(
         # Ensure we have clips for ALL videos in the dataset
         all_video_indices = set(range(len(val_set.samples)))
         found_video_indices = set(video_to_first_clip.keys())
-        print(f"  all_video_indices: {all_video_indices[:10]}")
-        print(f"  found_video_indices: {found_video_indices[:10]}")
+        # print(f"  all_video_indices: {all_video_indices[:10]}")
+        print(f"  found_video_indices: {video_to_first_clip.keys()}")
         missing_videos = all_video_indices - found_video_indices
         
         if missing_videos:
