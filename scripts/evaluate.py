@@ -194,8 +194,14 @@ def main(
                 video_to_first_clip[video_idx] = clip_idx
         
         # Create list of clip indices to use (first clip of each video)
-        clip_indices_to_use = sorted(video_to_first_clip.values())
+        # Sort by video_idx to maintain consistent ordering across all videos
+        video_indices_sorted = sorted(video_to_first_clip.keys())
+        clip_indices_to_use = [video_to_first_clip[vid_idx] for vid_idx in video_indices_sorted]
         print(f"  Using {len(clip_indices_to_use)} clips (1 per video)")
+        
+        # Verify we have clips from all videos
+        if len(video_indices_sorted) != len(val_set.samples):
+            print(f"  Warning: Found clips for {len(video_indices_sorted)} videos, but dataset has {len(val_set.samples)} videos")
         
         # Create a custom dataset that only returns the first clip of each video
         val_dataset = Subset(val_set, clip_indices_to_use)
@@ -320,11 +326,17 @@ def main(
                 video_paths.append(f"unknown_video_{i}.avi")
         
         # Use clip predictions directly (1 clip = 1 video)
+        # Note: Predictions are in the order of clip_indices_to_use, which is sorted by video_idx
         y = y_clips
         y_prob = y_prob_clips
         y_pred = y_pred_clips
         
+        # Verify we have predictions for all classes
+        unique_labels = torch.unique(y)
         print(f"✓ Using {len(y)} video predictions (1 clip per video)")
+        print(f"  Unique classes in predictions: {len(unique_labels)} (should be {num_classes} or close)")
+        if len(unique_labels) < num_classes // 2:
+            print(f"  WARNING: Only {len(unique_labels)} unique classes found! This might indicate a problem.")
     else:
         # Multiple clips per video mode: aggregate predictions
         print(f"\n{'='*60}")
@@ -332,13 +344,19 @@ def main(
         print(f"{'='*60}")
         
         # Group clips by video index
+        # IMPORTANT: Predictions are in the same order as the dataloader iterations
+        # which matches the dataset order (no subset, so clip_idx in predictions matches dataset clip_idx)
         video_to_clips = {}  # video_idx -> list of (clip_idx, y, y_prob)
         video_paths_map = {}  # video_idx -> video_path
         
         print(f"Processing {actual_num_clips} clips...")
         
-        for clip_idx in range(actual_num_clips):
+        for pred_idx in range(actual_num_clips):
             try:
+                # pred_idx corresponds to the clip index in the original dataset
+                # (since we're not using a Subset in this branch)
+                clip_idx = pred_idx
+                
                 # Map clip index to video index using val_set.indices
                 if clip_idx >= len(val_set.indices):
                     print(f"Warning: clip_idx {clip_idx} >= len(val_set.indices) {len(val_set.indices)}")
@@ -364,12 +382,12 @@ def main(
                     video_to_clips[video_idx] = []
                 video_to_clips[video_idx].append({
                     'clip_idx': clip_idx,
-                    'y': y_clips[clip_idx],
-                    'y_prob': y_prob_clips[clip_idx],
+                    'y': y_clips[pred_idx],  # Use pred_idx to index predictions
+                    'y_prob': y_prob_clips[pred_idx],  # Use pred_idx to index predictions
                 })
                 
             except (IndexError, KeyError, AttributeError) as e:
-                print(f"Warning: Could not process clip {clip_idx}: {e}")
+                print(f"Warning: Could not process clip {pred_idx}: {e}")
                 continue
         
         # Aggregate predictions per video (average probabilities)
@@ -399,8 +417,13 @@ def main(
         y_prob = torch.stack(y_prob_videos)
         y_pred = torch.argmax(y_prob, dim=1)
         
+        # Verify we have predictions for all classes
+        unique_labels = torch.unique(y)
         print(f"✓ Aggregated to {len(y)} video-level predictions")
         print(f"  Average clips per video: {actual_num_clips / len(y):.2f}")
+        print(f"  Unique classes in predictions: {len(unique_labels)} (should be {num_classes} or close)")
+        if len(unique_labels) < num_classes // 2:
+            print(f"  WARNING: Only {len(unique_labels)} unique classes found! This might indicate a problem.")
     
     # Get confidence scores (max probability)
     confidences = torch.max(y_prob, dim=1)[0].cpu().numpy()
