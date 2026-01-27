@@ -189,6 +189,26 @@ def main(
         # Strategy: Iterate through ALL clips to build a complete mapping
         video_to_first_clip = {}  # video_idx -> first clip_idx
         
+        # Debug: Check what video indices we see in the first 1000 clips
+        first_1000_video_indices = []
+        first_1000_labels = []
+        for clip_idx in range(min(1000, actual_dataset_size)):
+            if clip_idx >= len(val_set.indices):
+                continue
+            video_idx = val_set.indices[clip_idx]
+            first_1000_video_indices.append(video_idx)
+            try:
+                _, label = val_set[clip_idx]
+                first_1000_labels.append(label)
+            except:
+                pass
+        
+        if first_1000_labels:
+            unique_first_1000_labels = len(set(first_1000_labels))
+            unique_first_1000_videos = len(set(first_1000_video_indices))
+            print(f"  Debug: First 1000 clips span {unique_first_1000_videos} unique videos and {unique_first_1000_labels} unique classes")
+            print(f"  Debug: First 1000 clips labels: {sorted(set(first_1000_labels))[:20]}{'...' if unique_first_1000_labels > 20 else ''}")
+        
         # First pass: Iterate through all clips to find first clip of each video
         for clip_idx in range(actual_dataset_size):
             if clip_idx >= len(val_set.indices):
@@ -256,15 +276,21 @@ def main(
         # Debug: Check class distribution in selected clips
         if len(clip_indices_to_use) > 0:
             sample_labels = []
+            sample_labels_from_getitem = []  # Labels from __getitem__
             for clip_idx in clip_indices_to_use[:min(100, len(clip_indices_to_use))]:  # Sample first 100
                 try:
                     video_idx = val_set.indices[clip_idx]
-                    label = val_set.samples[video_idx][1]
-                    sample_labels.append(label)
+                    label_from_samples = val_set.samples[video_idx][1]
+                    sample_labels.append(label_from_samples)
+                    
+                    # Also check via __getitem__
+                    _, label_from_getitem = val_set[clip_idx]
+                    sample_labels_from_getitem.append(label_from_getitem)
                 except Exception as e:
                     pass
             if sample_labels:
                 unique_sample_labels = len(set(sample_labels))
+                unique_getitem_labels = len(set(sample_labels_from_getitem)) if sample_labels_from_getitem else 0
                 sample_video_indices = []
                 for clip_idx in clip_indices_to_use[:min(100, len(clip_indices_to_use))]:
                     try:
@@ -273,9 +299,13 @@ def main(
                     except:
                         pass
                 unique_sample_videos = len(set(sample_video_indices)) if sample_video_indices else 0
-                print(f"  Sample check: Found {unique_sample_labels} unique classes in first {len(sample_labels)} selected clips")
+                print(f"  Sample check: Found {unique_sample_labels} unique classes (from samples) in first {len(sample_labels)} selected clips")
+                print(f"  Sample check: Found {unique_getitem_labels} unique classes (from __getitem__) in first {len(sample_labels_from_getitem)} selected clips")
                 print(f"  Sample check: Found {unique_sample_videos} unique videos in first {len(sample_labels)} selected clips")
-                print(f"  Sample class labels: {sorted(set(sample_labels))[:20]}{'...' if unique_sample_labels > 20 else ''}")
+                print(f"  Sample class labels (from samples): {sorted(set(sample_labels))[:20]}{'...' if unique_sample_labels > 20 else ''}")
+                print(f"  Sample class labels (from __getitem__): {sorted(set(sample_labels_from_getitem))[:20]}{'...' if unique_getitem_labels > 20 else ''}")
+                if unique_sample_labels == 1 or unique_getitem_labels == 1:
+                    print(f"  WARNING: All labels are the same! This indicates we're only selecting clips from one class.")
         
         # Create a custom dataset that only returns the first clip of each video
         print("==**=="*5)
@@ -283,16 +313,32 @@ def main(
         print(f"  clip_indices_to_use length: {len(clip_indices_to_use)}")
         print("==**=="*5)
         val_dataset = Subset(val_set, clip_indices_to_use)
-        # Print example of the dataset
-        print(f"  Example of the dataset: {val_dataset[0]}")
-        # print(f"  Example of the dataset: {val_dataset[1]}")
-        # print(f"  Example of the dataset: {val_dataset[2]}")
-        # print(f"  Example of the dataset: {val_dataset[3]}")
-        # print(f"  Example of the dataset: {val_dataset[4]}")
-        # print(f"  Example of the dataset: {val_dataset[-3]}")
-        # print(f"  Example of the dataset: {val_dataset[-2]}")
-        # print(f"  Example of the dataset: {val_dataset[-1]}")
-        print(f"size of val_dataset: {len(val_set.samples)}")
+        
+        # Debug: Check labels from the Subset dataset
+        print(f"  Debug: Checking labels from Subset dataset...")
+        subset_labels = []
+        for debug_i in range(min(20, len(val_dataset))):
+            try:
+                _, debug_label = val_dataset[debug_i]
+                subset_labels.append(debug_label)
+                if debug_i < 10:
+                    debug_clip_idx = clip_indices_to_use[debug_i]
+                    debug_video_idx = val_set.indices[debug_clip_idx]
+                    debug_path, debug_label_from_samples = val_set.samples[debug_video_idx]
+                    print(f"    Subset[{debug_i}]: clip_idx={debug_clip_idx}, video_idx={debug_video_idx}, "
+                          f"label={debug_label}, label_from_samples={debug_label_from_samples}, "
+                          f"path={os.path.basename(debug_path)}")
+            except Exception as e:
+                print(f"    Subset[{debug_i}]: Error - {e}")
+        
+        if subset_labels:
+            unique_subset_labels = len(set(subset_labels))
+            print(f"  Found {unique_subset_labels} unique classes in first {len(subset_labels)} Subset samples")
+            print(f"  Labels: {sorted(set(subset_labels))[:20]}{'...' if unique_subset_labels > 20 else ''}")
+            if unique_subset_labels == 1:
+                print(f"  WARNING: All labels are the same ({subset_labels[0]})! This indicates a problem.")
+        
+        print(f"size of val_dataset: {len(val_dataset)} (should be {len(clip_indices_to_use)})")
     else:
         print(f"  Evaluation mode: Video-level (will aggregate predictions from multiple clips per video)")
         print(f"  Evaluating on: {actual_dataset_size} clips from {len(val_set.samples)} videos (full dataset)")
@@ -394,6 +440,23 @@ def main(
         video_paths = []
         y_labels = []  # Ground truth labels from dataset
         
+        # Debug: Check labels directly from dataset for first few clips
+        print(f"  Debug: Checking labels directly from dataset...")
+        if 'clip_indices_to_use' in locals():
+            for debug_i in range(min(10, len(clip_indices_to_use))):
+                try:
+                    debug_clip_idx = clip_indices_to_use[debug_i]
+                    # Get label directly from dataset using __getitem__
+                    _, debug_label_from_dataset = val_set[debug_clip_idx]
+                    # Also check via samples
+                    debug_video_idx_from_indices = val_set.indices[debug_clip_idx]
+                    debug_path_from_samples, debug_label_from_samples = val_set.samples[debug_video_idx_from_indices]
+                    print(f"    Clip {debug_i}: clip_idx={debug_clip_idx}, video_idx={debug_video_idx_from_indices}, "
+                          f"label_from_dataset={debug_label_from_dataset}, label_from_samples={debug_label_from_samples}, "
+                          f"path={os.path.basename(debug_path_from_samples)}")
+                except Exception as e:
+                    print(f"    Clip {debug_i}: Error - {e}")
+        
         for i in range(len(y_clips)):
             try:
                 # Get the clip index from the subset
@@ -407,19 +470,27 @@ def main(
                     y_labels.append(torch.tensor(0))  # Fallback label
                     continue
                 
+                # IMPORTANT: val_set.indices[clip_idx] gives us the video_idx (from video_clips)
+                # Then we need to map video_idx to sample_idx using val_set.indices again
+                # Actually wait - let's get the label directly from the dataset instead
+                # This is more reliable than trying to map indices
+                _, label = val_set[clip_idx]  # Get label directly from dataset
+                
+                # Also get video_idx for path lookup
                 video_idx = val_set.indices[clip_idx]
                 if video_idx >= len(val_set.samples):
                     video_paths.append(f"unknown_video_{i}.avi")
-                    y_labels.append(torch.tensor(0))  # Fallback label
+                    y_labels.append(torch.tensor(label))  # Use label from dataset even if path fails
                     continue
                 
-                # Get video path and label from dataset
-                video_path, label = val_set.samples[video_idx]
+                # Get video path from samples
+                video_path, _ = val_set.samples[video_idx]  # Don't use label from samples, use from dataset
                 if not os.path.isabs(video_path):
                     video_path = os.path.join(val_set.root, video_path)
                 video_paths.append(video_path)
-                y_labels.append(torch.tensor(label))
+                y_labels.append(torch.tensor(label))  # Use label from dataset.__getitem__
             except (IndexError, KeyError, AttributeError) as e:
+                print(f"  Warning: Error getting label for clip {i}: {e}")
                 video_paths.append(f"unknown_video_{i}.avi")
                 y_labels.append(torch.tensor(0))  # Fallback label
         
