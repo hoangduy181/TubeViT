@@ -185,18 +185,38 @@ def main(
     # Filter to single clip per video if requested
     if single_clip_per_video:
         print(f"  Evaluation mode: Single clip per video (1 clip per video)")
-        # Find the first clip index for each video by iterating through ALL clips
-        # This ensures we get clips from ALL videos, not just the first ones encountered
+        # Find the first clip index for each video
+        # Strategy: Iterate through ALL clips to build a complete mapping
         video_to_first_clip = {}  # video_idx -> first clip_idx
         
-        # Iterate through all clips to find first clip of each video
+        # First pass: Iterate through all clips to find first clip of each video
         for clip_idx in range(actual_dataset_size):
             if clip_idx >= len(val_set.indices):
                 continue
             video_idx = val_set.indices[clip_idx]
-            # Only store if we haven't seen this video_idx yet
+            # Only store if we haven't seen this video_idx yet (first occurrence)
             if video_idx not in video_to_first_clip:
                 video_to_first_clip[video_idx] = clip_idx
+        
+        # Second pass: Ensure we have clips for ALL videos
+        # If some videos are missing, search for them explicitly
+        all_video_indices_set = set(range(len(val_set.samples)))
+        found_video_indices_set = set(video_to_first_clip.keys())
+        
+        if len(found_video_indices_set) < len(all_video_indices_set):
+            # Some videos are missing - search for them
+            missing_videos = all_video_indices_set - found_video_indices_set
+            print(f"  First pass found {len(found_video_indices_set)} videos, missing {len(missing_videos)} videos")
+            print(f"  Searching for missing videos...")
+            
+            # Search through all clips again for missing videos
+            for video_idx in sorted(missing_videos):
+                for clip_idx in range(actual_dataset_size):
+                    if clip_idx >= len(val_set.indices):
+                        continue
+                    if val_set.indices[clip_idx] == video_idx:
+                        video_to_first_clip[video_idx] = clip_idx
+                        break
         
         # Ensure we have clips for ALL videos in the dataset
         all_video_indices = set(range(len(val_set.samples)))
@@ -239,11 +259,21 @@ def main(
                     video_idx = val_set.indices[clip_idx]
                     label = val_set.samples[video_idx][1]
                     sample_labels.append(label)
-                except:
+                except Exception as e:
                     pass
             if sample_labels:
                 unique_sample_labels = len(set(sample_labels))
+                sample_video_indices = []
+                for clip_idx in clip_indices_to_use[:min(100, len(clip_indices_to_use))]:
+                    try:
+                        video_idx = val_set.indices[clip_idx]
+                        sample_video_indices.append(video_idx)
+                    except:
+                        pass
+                unique_sample_videos = len(set(sample_video_indices)) if sample_video_indices else 0
                 print(f"  Sample check: Found {unique_sample_labels} unique classes in first {len(sample_labels)} selected clips")
+                print(f"  Sample check: Found {unique_sample_videos} unique videos in first {len(sample_labels)} selected clips")
+                print(f"  Sample class labels: {sorted(set(sample_labels))[:20]}{'...' if unique_sample_labels > 20 else ''}")
         
         # Create a custom dataset that only returns the first clip of each video
         val_dataset = Subset(val_set, clip_indices_to_use)
