@@ -277,6 +277,15 @@ def main(
         
         # Create a custom dataset that only returns the first clip of each video
         val_dataset = Subset(val_set, clip_indices_to_use)
+        # Print example of the dataset
+        print(f"  Example of the dataset: {val_dataset[0]}")
+        print(f"  Example of the dataset: {val_dataset[1]}")
+        print(f"  Example of the dataset: {val_dataset[2]}")
+        print(f"  Example of the dataset: {val_dataset[3]}")
+        print(f"  Example of the dataset: {val_dataset[4]}")
+        print(f"  Example of the dataset: {val_dataset[5]}")
+        print(f"  Example of the dataset: {val_dataset[6]}")
+        print(f"  Example of the dataset: {val_dataset[7]}")
     else:
         print(f"  Evaluation mode: Video-level (will aggregate predictions from multiple clips per video)")
         print(f"  Evaluating on: {actual_dataset_size} clips from {len(val_set.samples)} videos (full dataset)")
