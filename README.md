@@ -133,6 +133,8 @@ Options:
   --num-workers INTEGER           Number of DataLoader workers. Defaults to number of CPUs.
   --seed INTEGER                  random seed.
   --verbose                       Show input video
+  --single-clip-per-video         Use only 1 clip per video (faster but less robust). If False, aggregates predictions from multiple clips per video.
+  --run-name TEXT                 Name for this evaluation run. If not provided, will be auto-generated.
   --help                          Show this message and exit.
 ```
 
@@ -144,9 +146,19 @@ python scripts/evaluate.py --config configs/ucf101.yaml --model-path path/to/mod
 
 # Using command-line arguments
 python scripts/evaluate.py -r path/to/dataset -a path/to/annotation -m path/to/model.ckpt --label-path path/to/classInd.txt
+
+# Single clip per video (faster evaluation)
+python scripts/evaluate.py --config configs/ucf101.yaml --model-path path/to/model.ckpt --single-clip-per-video
+
+# Multiple clips per video with custom run name (default, more robust)
+python scripts/evaluate.py --config configs/ucf101.yaml --model-path path/to/model.ckpt --run-name my_evaluation_run
 ```
 
 **Note:** By default, `--num-workers` automatically uses all available CPUs for optimal data loading performance. You can override this by specifying `--num-workers <number>` if needed.
+
+**Evaluation Modes:**
+- **Default (multiple clips per video)**: Aggregates predictions from multiple clips per video by averaging probabilities. This is more robust and provides better accuracy, but is slower (~3-5x slower than single clip mode).
+- **Single clip per video (`--single-clip-per-video`)**: Uses only 1 clip per video (the first clip). This is faster and simpler, but less robust as it only samples a single temporal segment from each video. Good for quick evaluation checks or when speed is prioritized.
 
 ## Inference
 

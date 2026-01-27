@@ -18,7 +18,7 @@ import seaborn as sns
 import torch
 from tubevit.transforms import Normalize
 
-from torch.utils.data import DataLoader, SequentialSampler
+from torch.utils.data import DataLoader, SequentialSampler, Subset
 from torchmetrics.functional import accuracy, auroc, confusion_matrix, f1_score
 from torchvision.transforms import transforms as T
 from torchvision.transforms._transforms_video import ToTensorVideo
@@ -48,6 +48,7 @@ torch.set_float32_matmul_precision('medium')
 @click.option("--seed", type=int, default=None, help="random seed.")
 @click.option("--verbose", type=bool, is_flag=True, show_default=True, default=False, help="Show input video")
 @click.option("--run-name", type=str, default=None, help="Name for this evaluation run. If not provided, will be auto-generated.")
+@click.option("--single-clip-per-video", type=bool, is_flag=True, show_default=True, default=False, help="Use only 1 clip per video (faster but less robust). If False, aggregates predictions from multiple clips per video.")
 def main(
     config,
     dataset_root,
@@ -62,6 +63,7 @@ def main(
     seed,
     verbose,
     run_name,
+    single_clip_per_video,
 ):
     # Load configuration from file if provided
     cfg = {}
@@ -84,6 +86,7 @@ def main(
         'seed': seed,
         'verbose': verbose,
         'run_name': run_name,
+        'single_clip_per_video': single_clip_per_video,
     }
     
     # Merge config with CLI args (CLI args take precedence)
@@ -101,6 +104,7 @@ def main(
     num_workers = get_config_value(merged_config, 'num_workers') or get_config_value(merged_config, 'training.num_workers')
     seed = get_config_value(merged_config, 'seed') or get_config_value(merged_config, 'training.seed', 42)
     run_name = get_config_value(merged_config, 'run_name')
+    single_clip_per_video = get_config_value(merged_config, 'single_clip_per_video', False)
     
     # Validate required parameters
     if not dataset_root:
@@ -174,14 +178,34 @@ def main(
     actual_dataset_size = len(val_set)
     print(f"Dataset info:")
     print(f"  Total clips in validation set: {actual_dataset_size}")
-    print(f"  Evaluating on: {actual_dataset_size} samples (full dataset)")
-    print(f"  Dataset has {len(val_set.indices)} clip indices")
-    print(f"  Dataset has {len(val_set.samples)} video samples")
+    print(f"  Total videos in validation set: {len(val_set.samples)}")
+    print(f"  Average clips per video: {actual_dataset_size / len(val_set.samples):.2f}")
+    
+    # Filter to single clip per video if requested
+    if single_clip_per_video:
+        print(f"  Evaluation mode: Single clip per video (1 clip per video)")
+        # Find the first clip index for each video
+        video_to_first_clip = {}  # video_idx -> first clip_idx
+        for clip_idx in range(actual_dataset_size):
+            if clip_idx >= len(val_set.indices):
+                continue
+            video_idx = val_set.indices[clip_idx]
+            if video_idx not in video_to_first_clip:
+                video_to_first_clip[video_idx] = clip_idx
+        
+        # Create list of clip indices to use (first clip of each video)
+        clip_indices_to_use = sorted(video_to_first_clip.values())
+        print(f"  Using {len(clip_indices_to_use)} clips (1 per video)")
+        
+        # Create a custom dataset that only returns the first clip of each video
+        val_dataset = Subset(val_set, clip_indices_to_use)
+    else:
+        print(f"  Evaluation mode: Video-level (will aggregate predictions from multiple clips per video)")
+        print(f"  Evaluating on: {actual_dataset_size} clips from {len(val_set.samples)} videos (full dataset)")
+        val_dataset = val_set
     
     # Use SequentialSampler for deterministic evaluation (no shuffling)
-    # Always use full dataset - no subsetting
-    val_sampler = SequentialSampler(val_set)
-    val_dataset = val_set
+    val_sampler = SequentialSampler(val_dataset)
     
     val_dataloader = DataLoader(
         val_dataset,
@@ -240,90 +264,155 @@ def main(
     predictions = trainer.predict(model, dataloaders=val_dataloader)
     end_time = time.time()
     
-    y = torch.cat([item["y"] for item in predictions])
-    y_pred = torch.cat([item["y_pred"] for item in predictions])
-    y_prob = torch.cat([item["y_prob"] for item in predictions])
+    # Collect all clip-level predictions
+    y_clips = torch.cat([item["y"] for item in predictions])
+    y_pred_clips = torch.cat([item["y_pred"] for item in predictions])
+    y_prob_clips = torch.cat([item["y_prob"] for item in predictions])
     
-    # Calculate performance metrics
+    # Calculate performance metrics (clip-level)
     total_time = end_time - start_time
-    total_frames = len(y) * frames_per_clip  # Total frames processed
+    total_frames = len(y_clips) * frames_per_clip  # Total frames processed
     fps = total_frames / total_time if total_time > 0 else 0
-    samples_per_sec = len(y) / total_time if total_time > 0 else 0
+    samples_per_sec = len(y_clips) / total_time if total_time > 0 else 0
     
     print(f"\n{'='*60}")
-    print("Performance Metrics")
+    print("Performance Metrics (Clip-level)")
     print(f"{'='*60}")
     print(f"Total inference time: {total_time:.2f} seconds")
-    print(f"Total samples processed: {len(y)}")
+    print(f"Total clips processed: {len(y_clips)}")
     print(f"Total frames processed: {total_frames}")
     print(f"FPS (frames per second): {fps:.2f}")
-    print(f"Samples per second: {samples_per_sec:.2f}")
-    print(f"Time per sample: {total_time / len(y) * 1000:.2f} ms" if len(y) > 0 else "N/A")
+    print(f"Clips per second: {samples_per_sec:.2f}")
+    print(f"Time per clip: {total_time / len(y_clips) * 1000:.2f} ms" if len(y_clips) > 0 else "N/A")
+    
+    actual_num_clips = len(y_clips)
+    
+    if single_clip_per_video:
+        # Single clip per video mode: no aggregation needed
+        print(f"\n{'='*60}")
+        print("Single clip per video mode (no aggregation)")
+        print(f"{'='*60}")
+        
+        # Get video paths for each clip
+        video_paths = []
+        for i in range(len(y_clips)):
+            try:
+                # Get the clip index from the subset
+                if isinstance(val_dataset, Subset):
+                    clip_idx = val_dataset.indices[i]
+                else:
+                    clip_idx = i
+                
+                if clip_idx >= len(val_set.indices):
+                    video_paths.append(f"unknown_video_{i}.avi")
+                    continue
+                
+                video_idx = val_set.indices[clip_idx]
+                if video_idx >= len(val_set.samples):
+                    video_paths.append(f"unknown_video_{i}.avi")
+                    continue
+                
+                video_path, _ = val_set.samples[video_idx]
+                if not os.path.isabs(video_path):
+                    video_path = os.path.join(val_set.root, video_path)
+                video_paths.append(video_path)
+            except (IndexError, KeyError, AttributeError) as e:
+                video_paths.append(f"unknown_video_{i}.avi")
+        
+        # Use clip predictions directly (1 clip = 1 video)
+        y = y_clips
+        y_prob = y_prob_clips
+        y_pred = y_pred_clips
+        
+        print(f"✓ Using {len(y)} video predictions (1 clip per video)")
+    else:
+        # Multiple clips per video mode: aggregate predictions
+        print(f"\n{'='*60}")
+        print("Aggregating predictions per video...")
+        print(f"{'='*60}")
+        
+        # Group clips by video index
+        video_to_clips = {}  # video_idx -> list of (clip_idx, y, y_prob)
+        video_paths_map = {}  # video_idx -> video_path
+        
+        print(f"Processing {actual_num_clips} clips...")
+        
+        for clip_idx in range(actual_num_clips):
+            try:
+                # Map clip index to video index using val_set.indices
+                if clip_idx >= len(val_set.indices):
+                    print(f"Warning: clip_idx {clip_idx} >= len(val_set.indices) {len(val_set.indices)}")
+                    continue
+                
+                video_idx = val_set.indices[clip_idx]
+                
+                # Safety check: ensure video_idx is within bounds
+                if video_idx >= len(val_set.samples):
+                    print(f"Warning: video_idx {video_idx} >= len(val_set.samples) {len(val_set.samples)}")
+                    continue
+                
+                # Store video path (same for all clips from this video)
+                if video_idx not in video_paths_map:
+                    video_path, _ = val_set.samples[video_idx]
+                    # Convert to absolute path if relative
+                    if not os.path.isabs(video_path):
+                        video_path = os.path.join(val_set.root, video_path)
+                    video_paths_map[video_idx] = video_path
+                
+                # Group clip predictions by video
+                if video_idx not in video_to_clips:
+                    video_to_clips[video_idx] = []
+                video_to_clips[video_idx].append({
+                    'clip_idx': clip_idx,
+                    'y': y_clips[clip_idx],
+                    'y_prob': y_prob_clips[clip_idx],
+                })
+                
+            except (IndexError, KeyError, AttributeError) as e:
+                print(f"Warning: Could not process clip {clip_idx}: {e}")
+                continue
+        
+        # Aggregate predictions per video (average probabilities)
+        print(f"Aggregating {len(video_to_clips)} videos from {actual_num_clips} clips...")
+        
+        video_indices = sorted(video_to_clips.keys())
+        y_videos = []
+        y_prob_videos = []
+        video_paths = []
+        
+        for video_idx in video_indices:
+            clips_data = video_to_clips[video_idx]
+            
+            # Get ground truth label (should be same for all clips from same video)
+            gt_label = clips_data[0]['y']
+            
+            # Average probabilities across all clips from this video
+            prob_tensors = [clip['y_prob'] for clip in clips_data]
+            avg_prob = torch.stack(prob_tensors).mean(dim=0)
+            
+            y_videos.append(gt_label)
+            y_prob_videos.append(avg_prob)
+            video_paths.append(video_paths_map[video_idx])
+        
+        # Convert to tensors
+        y = torch.stack(y_videos)
+        y_prob = torch.stack(y_prob_videos)
+        y_pred = torch.argmax(y_prob, dim=1)
+        
+        print(f"✓ Aggregated to {len(y)} video-level predictions")
+        print(f"  Average clips per video: {actual_num_clips / len(y):.2f}")
     
     # Get confidence scores (max probability)
     confidences = torch.max(y_prob, dim=1)[0].cpu().numpy()
-    
-    # Get video paths from dataset - use actual indices from the dataset
-    # The predictions are in the same order as the dataloader iterations
-    video_paths = []
-    actual_num_samples = len(y)
-    actual_dataset_len = len(val_set)  # Full dataset size
-    
-    print(f"Collecting video paths...")
-    print(f"  Predictions: {actual_num_samples}, Dataset size: {actual_dataset_len}")
-    
-    # Collect paths for all samples (using full dataset)
-    for sample_idx in range(actual_num_samples):
-        try:
-            # Direct access to dataset (no subset, always full dataset)
-            if sample_idx >= len(val_set):
-                print(f"Warning: sample_idx {sample_idx} >= len(val_set) {len(val_set)}")
-                video_paths.append(f"unknown_video_{sample_idx}.avi")
-                continue
-            
-            clip_idx = sample_idx
-            
-            # Safety check: ensure clip_idx is within bounds of val_set.indices
-            if clip_idx >= len(val_set.indices):
-                print(f"Warning: clip_idx {clip_idx} >= len(val_set.indices) {len(val_set.indices)} (sample_idx={sample_idx})")
-                video_paths.append(f"unknown_video_{sample_idx}.avi")
-                continue
-            
-            # Map clip index to video index using val_set.indices
-            video_idx = val_set.indices[clip_idx]
-            
-            # Safety check: ensure video_idx is within bounds
-            if video_idx >= len(val_set.samples):
-                print(f"Warning: video_idx {video_idx} >= len(val_set.samples) {len(val_set.samples)}")
-                video_paths.append(f"unknown_video_{sample_idx}.avi")
-                continue
-            
-            video_path, _ = val_set.samples[video_idx]
-            
-            # Convert to absolute path if relative
-            if not os.path.isabs(video_path):
-                video_path = os.path.join(val_set.root, video_path)
-            video_paths.append(video_path)
-            
-        except (IndexError, KeyError, AttributeError) as e:
-            print(f"Warning: Could not get video path for sample {sample_idx}: {e}")
-            video_paths.append(f"unknown_video_{sample_idx}.avi")
-    
-    # Ensure we have the same number of video paths as predictions
-    if len(video_paths) != actual_num_samples:
-        print(f"Warning: Mismatch between predictions ({actual_num_samples}) and video paths ({len(video_paths)})")
-        # Pad or truncate to match
-        if len(video_paths) < actual_num_samples:
-            video_paths.extend([f"unknown_video_{i}.avi" for i in range(len(video_paths), actual_num_samples)])
-        else:
-            video_paths = video_paths[:actual_num_samples]
-    
-    print(f"✓ Collected {len(video_paths)} video paths")
 
     print(f"\n{'='*60}")
-    print("Evaluation Results")
+    eval_mode = "Single clip per video" if single_clip_per_video else "Video-level (aggregated)"
+    print(f"Evaluation Results ({eval_mode})")
     print(f"{'='*60}")
-    print(f"Total samples evaluated: {len(y)}")
+    print(f"Total videos evaluated: {len(y)}")
+    print(f"Total clips processed: {actual_num_clips}")
+    if not single_clip_per_video:
+        print(f"Average clips per video: {actual_num_clips / len(y):.2f}")
     print(f"Unique classes in evaluation set: {len(torch.unique(y))}")
     
     acc = accuracy(y_prob, y, task="multiclass", num_classes=num_classes)
@@ -354,7 +443,11 @@ def main(
         "model_path": str(model_path),
         "dataset_root": str(dataset_root),
         "timestamp": datetime.now().isoformat(),
-        "total_samples": len(y),
+        "evaluation_level": "single_clip" if single_clip_per_video else "video_aggregated",  # Evaluation mode
+        "single_clip_per_video": single_clip_per_video,
+        "total_videos": len(y),
+        "total_clips_processed": actual_num_clips,
+        "average_clips_per_video": actual_num_clips / len(y) if len(y) > 0 and not single_clip_per_video else 1.0,
         "unique_classes": len(unique_classes),
         "num_classes": num_classes,
         "accuracy": float(acc.item()),
@@ -365,8 +458,9 @@ def main(
             "total_inference_time_seconds": total_time,
             "total_frames_processed": total_frames,
             "fps": fps,
-            "samples_per_second": samples_per_sec,
-            "time_per_sample_ms": total_time / len(y) * 1000 if len(y) > 0 else None,
+            "clips_per_second": samples_per_sec,
+            "time_per_clip_ms": total_time / actual_num_clips * 1000 if actual_num_clips > 0 else None,
+            "time_per_video_ms": total_time / len(y) * 1000 if len(y) > 0 else None,
         },
         "model_complexity": {
             "flops_gflops": flops_count / 1e9 if flops_count is not None else None,
@@ -378,6 +472,7 @@ def main(
             "num_workers": num_workers,
             "seed": seed,
             "eval_sample_size": actual_dataset_size,  # Always use full dataset
+            "aggregation_method": "none" if single_clip_per_video else "average_probabilities",  # How clips are aggregated per video
         }
     }
     
@@ -399,7 +494,11 @@ def main(
         f.write(f"\n{'='*60}\n")
         f.write("Metrics\n")
         f.write(f"{'='*60}\n")
-        f.write(f"Total samples evaluated: {len(y)}\n")
+        eval_mode_desc = "Single clip per video" if single_clip_per_video else "Video-level (aggregated from clips)"
+        f.write(f"Evaluation level: {eval_mode_desc}\n")
+        f.write(f"Total videos evaluated: {len(y)}\n")
+        f.write(f"Total clips processed: {actual_num_clips}\n")
+        f.write(f"Average clips per video: {actual_num_clips / len(y):.2f}\n")
         f.write(f"Unique classes in evaluation set: {len(unique_classes)}\n")
         f.write(f"Accuracy: {acc:.4f} ({acc*100:.2f}%)\n")
         f.write(f"Top-5 Accuracy: {acc_top5:.4f} ({acc_top5*100:.2f}%)\n")
@@ -413,8 +512,9 @@ def main(
         f.write(f"{'='*60}\n")
         f.write(f"Total inference time: {total_time:.2f} seconds\n")
         f.write(f"FPS (frames per second): {fps:.2f}\n")
-        f.write(f"Samples per second: {samples_per_sec:.2f}\n")
-        f.write(f"Time per sample: {total_time / len(y) * 1000:.2f} ms\n" if len(y) > 0 else "N/A\n")
+        f.write(f"Clips per second: {samples_per_sec:.2f}\n")
+        f.write(f"Time per clip: {total_time / actual_num_clips * 1000:.2f} ms\n" if actual_num_clips > 0 else "N/A\n")
+        f.write(f"Time per video: {total_time / len(y) * 1000:.2f} ms\n" if len(y) > 0 else "N/A\n")
         if flops_count is not None:
             f.write(f"Model FLOPS: {flops_count / 1e9:.2f} GFLOPs\n")
         f.write(f"\n{'='*60}\n")
@@ -455,19 +555,19 @@ def main(
             writer.writerow(row)
     print(f"✓ Confusion matrix (CSV) saved to: {cm_csv_file}")
     
-    # Save per-sample predictions to txt file
+    # Save per-video predictions to txt file
     predictions_file = results_dir / "predictions.txt"
     with open(predictions_file, 'w') as f:
-        f.write(f"{'Sample':<60} {'Ground Truth':<20} {'Prediction':<20} {'Confidence':<15} {'Correct':<10}\n")
+        f.write(f"{'Video':<60} {'Ground Truth':<20} {'Prediction':<20} {'Confidence':<15} {'Correct':<10}\n")
         f.write("=" * 125 + "\n")
         for i in range(len(y)):
-            sample_name = os.path.basename(video_paths[i]) if i < len(video_paths) else f"sample_{i}"
+            video_name = os.path.basename(video_paths[i]) if i < len(video_paths) else f"video_{i}"
             gt_label = labels[y[i].item()]
             pred_label = labels[y_pred[i].item()]
             confidence = confidences[i]
             is_correct = "✓" if y[i].item() == y_pred[i].item() else "✗"
-            f.write(f"{sample_name:<60} {gt_label:<20} {pred_label:<20} {confidence:<15.4f} {is_correct:<10}\n")
-    print(f"✓ Per-sample predictions saved to: {predictions_file}")
+            f.write(f"{video_name:<60} {gt_label:<20} {pred_label:<20} {confidence:<15.4f} {is_correct:<10}\n")
+    print(f"✓ Per-video predictions saved to: {predictions_file}")
     
     # Create examples directory
     examples_dir = results_dir / "examples"
@@ -551,9 +651,9 @@ def main(
     print(f"All results saved to: {results_dir}")
     print(f"{'='*60}")
     print(f"\nSaved files:")
-    print(f"  ✓ predictions.txt: Per-sample predictions with ground truth, prediction, confidence")
-    print(f"  ✓ confusion_matrix.csv: Confusion matrix in CSV format")
-    print(f"  ✓ confusion_matrix.png: Confusion matrix visualization")
+    print(f"  ✓ predictions.txt: Per-video predictions (aggregated from clips) with ground truth, prediction, confidence")
+    print(f"  ✓ confusion_matrix.csv: Confusion matrix in CSV format (video-level)")
+    print(f"  ✓ confusion_matrix.png: Confusion matrix visualization (video-level)")
     print(f"  ✓ metrics.json: Evaluation metrics in JSON format")
     print(f"  ✓ summary.txt: Text summary of evaluation results")
     print(f"  ✓ examples/: Directory with example videos")
@@ -561,6 +661,12 @@ def main(
         print(f"    - high_conf_wrong_*.avi: Top {num_incorrect} highest confidence incorrect predictions")
     if len(correct_indices) > 0:
         print(f"    - low_conf_right_*.avi: Top {num_correct} lowest confidence correct predictions")
+    if single_clip_per_video:
+        print(f"\nNote: Evaluation uses 1 clip per video (faster but less robust).")
+        print(f"      {actual_num_clips} clips were processed (1 clip = 1 video).")
+    else:
+        print(f"\nNote: Evaluation is performed at video-level by aggregating predictions from multiple clips per video.")
+        print(f"      {actual_num_clips} clips were processed and aggregated into {len(y)} video-level predictions.")
     print(f"{'='*60}\n")
 
 
