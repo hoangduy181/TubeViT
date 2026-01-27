@@ -354,7 +354,7 @@ def main(
     print(f"{'='*60}")
     
     start_time = time.time()
-    trainer = pl.Trainer(accelerator="auto", default_root_dir="lightning_predict_logs")
+    trainer = pl.Trainer(accelerator="auto", devices=1, default_root_dir="lightning_predict_logs")
     predictions = trainer.predict(model, dataloaders=val_dataloader)
     end_time = time.time()
     
