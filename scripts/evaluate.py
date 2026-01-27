@@ -314,17 +314,8 @@ def main(
     y_pred_clips = torch.cat([item["y_pred"] for item in predictions])
     y_prob_clips = torch.cat([item["y_prob"] for item in predictions])
     
-    # Debug: Check ground truth labels from predictions
-    unique_y_clips = torch.unique(y_clips)
-    print(f"\n{'='*60}")
-    print("Debug: Clip-level ground truth labels")
-    print(f"{'='*60}")
-    print(f"Total clips: {len(y_clips)}")
-    print(f"Unique classes in y_clips: {len(unique_y_clips)}")
-    print(f"Class indices: {unique_y_clips.tolist()[:20]}{'...' if len(unique_y_clips) > 20 else ''}")
-    if len(unique_y_clips) == 1:
-        print(f"  WARNING: Only 1 class found in ground truth labels! This indicates a problem.")
-        print(f"  All labels are class {unique_y_clips[0].item()}")
+    # Note: y_clips from predictions may be incorrect when using Subset
+    # We will use dataset labels directly instead of prediction labels
     
     # Calculate performance metrics (clip-level)
     total_time = end_time - start_time
