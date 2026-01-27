@@ -240,6 +240,8 @@ def main(
         # Create list of clip indices to use (first clip of each video)
         # Sort by video_idx to maintain consistent ordering across all videos
         video_indices_sorted = sorted(video_to_first_clip.keys())
+        print(f"  video_indices_sorted: {video_indices_sorted[:10]}")
+        print(f"  video_to_first_clip: {video_to_first_clip.values()[:10]}")
         clip_indices_to_use = [video_to_first_clip[vid_idx] for vid_idx in video_indices_sorted]
         
         print(f"  Using {len(clip_indices_to_use)} clips (1 per video)")
@@ -278,6 +280,7 @@ def main(
         # Create a custom dataset that only returns the first clip of each video
         print("==**=="*5)
         print(f"  clip_indices_to_use: {clip_indices_to_use[:10]}")
+        print(f"  clip_indices_to_use length: {len(clip_indices_to_use)}")
         print("==**=="*5)
         val_dataset = Subset(val_set, clip_indices_to_use)
         # Print example of the dataset
@@ -286,9 +289,9 @@ def main(
         print(f"  Example of the dataset: {val_dataset[2]}")
         print(f"  Example of the dataset: {val_dataset[3]}")
         print(f"  Example of the dataset: {val_dataset[4]}")
-        print(f"  Example of the dataset: {val_dataset[5]}")
-        print(f"  Example of the dataset: {val_dataset[6]}")
-        print(f"  Example of the dataset: {val_dataset[7]}")
+        print(f"  Example of the dataset: {val_dataset[-3]}")
+        print(f"  Example of the dataset: {val_dataset[-2]}")
+        print(f"  Example of the dataset: {val_dataset[-1]}")
     else:
         print(f"  Evaluation mode: Video-level (will aggregate predictions from multiple clips per video)")
         print(f"  Evaluating on: {actual_dataset_size} clips from {len(val_set.samples)} videos (full dataset)")
