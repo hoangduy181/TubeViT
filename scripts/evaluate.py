@@ -350,8 +350,10 @@ def main(
         print("Single clip per video mode (no aggregation)")
         print(f"{'='*60}")
         
-        # Get video paths for each clip
+        # Get video paths and labels for each clip
         video_paths = []
+        y_labels = []  # Ground truth labels from dataset
+        
         for i in range(len(y_clips)):
             try:
                 # Get the clip index from the subset
@@ -362,32 +364,40 @@ def main(
                 
                 if clip_idx >= len(val_set.indices):
                     video_paths.append(f"unknown_video_{i}.avi")
+                    y_labels.append(torch.tensor(0))  # Fallback label
                     continue
                 
                 video_idx = val_set.indices[clip_idx]
                 if video_idx >= len(val_set.samples):
                     video_paths.append(f"unknown_video_{i}.avi")
+                    y_labels.append(torch.tensor(0))  # Fallback label
                     continue
                 
-                video_path, _ = val_set.samples[video_idx]
+                # Get video path and label from dataset
+                video_path, label = val_set.samples[video_idx]
                 if not os.path.isabs(video_path):
                     video_path = os.path.join(val_set.root, video_path)
                 video_paths.append(video_path)
+                y_labels.append(torch.tensor(label))
             except (IndexError, KeyError, AttributeError) as e:
                 video_paths.append(f"unknown_video_{i}.avi")
+                y_labels.append(torch.tensor(0))  # Fallback label
         
         # Use clip predictions directly (1 clip = 1 video)
-        # Note: Predictions are in the order of clip_indices_to_use, which is sorted by video_idx
-        y = y_clips
+        # BUT use labels from dataset, not from predictions (which may be wrong)
+        y = torch.stack(y_labels)  # Use dataset labels
         y_prob = y_prob_clips
         y_pred = y_pred_clips
         
         # Verify we have predictions for all classes
         unique_labels = torch.unique(y)
         print(f"✓ Using {len(y)} video predictions (1 clip per video)")
-        print(f"  Unique classes in predictions: {len(unique_labels)} (should be {num_classes} or close)")
+        print(f"  Unique classes in dataset labels: {len(unique_labels)} (should be {num_classes} or close)")
+        print(f"  Unique classes in prediction labels: {len(torch.unique(y_clips))}")
         if len(unique_labels) < num_classes // 2:
             print(f"  WARNING: Only {len(unique_labels)} unique classes found! This might indicate a problem.")
+        if len(torch.unique(y_clips)) == 1:
+            print(f"  NOTE: Prediction labels only have 1 class, but using dataset labels instead.")
     else:
         # Multiple clips per video mode: aggregate predictions
         print(f"\n{'='*60}")
