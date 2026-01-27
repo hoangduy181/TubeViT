@@ -241,7 +241,7 @@ def main(
         # Sort by video_idx to maintain consistent ordering across all videos
         video_indices_sorted = sorted(video_to_first_clip.keys())
         print(f"  video_indices_sorted: {video_indices_sorted[:10]}")
-        print(f"  video_to_first_clip: {video_to_first_clip.values()[:10]}")
+        print(f"  video_to_first_clip: {list(video_to_first_clip.values())[:10]}")
         clip_indices_to_use = [video_to_first_clip[vid_idx] for vid_idx in video_indices_sorted]
         
         print(f"  Using {len(clip_indices_to_use)} clips (1 per video)")
