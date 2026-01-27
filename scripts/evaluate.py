@@ -179,6 +179,7 @@ def main(
     print(f"Dataset info:")
     print(f"  Total clips in validation set: {actual_dataset_size}")
     print(f"  Total videos in validation set: {len(val_set.samples)}")
+    print(f"  val_set.indices: {val_set.indices}")
     print(f"  Average clips per video: {actual_dataset_size / len(val_set.samples):.2f}")
     
     # Filter to single clip per video if requested
@@ -200,6 +201,8 @@ def main(
         # Ensure we have clips for ALL videos in the dataset
         all_video_indices = set(range(len(val_set.samples)))
         found_video_indices = set(video_to_first_clip.keys())
+        print(f"  all_video_indices: {all_video_indices[:10]}")
+        print(f"  found_video_indices: {found_video_indices[:10]}")
         missing_videos = all_video_indices - found_video_indices
         
         if missing_videos:
