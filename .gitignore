@@ -138,6 +138,9 @@ dmypy.json
 lightning_logs
 logs/
 
+# evaluation results
+results/
+
 # pycharm
 .idea
 

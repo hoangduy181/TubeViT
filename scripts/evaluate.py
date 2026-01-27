@@ -5,6 +5,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import os
 import pickle
+import json
+from datetime import datetime
 
 import click
 import matplotlib.pyplot as plt
@@ -40,6 +42,7 @@ torch.set_float32_matmul_precision('medium')
 @click.option("--num-workers", type=int, default=None, help="Number of DataLoader workers. Defaults to number of CPUs.")
 @click.option("--seed", type=int, default=42, help="random seed.")
 @click.option("--verbose", type=bool, is_flag=True, show_default=True, default=False, help="Show input video")
+@click.option("--run-name", type=str, default=None, help="Name for this evaluation run. If not provided, will be auto-generated.")
 def main(
     dataset_root,
     model_path,
@@ -52,8 +55,25 @@ def main(
     num_workers,
     seed,
     verbose,
+    run_name,
 ):
     pl.seed_everything(seed)
+
+    # Generate run name if not provided
+    if run_name is None:
+        # Extract model filename without extension
+        model_filename = Path(model_path).stem
+        # Generate timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_name = f"eval_{model_filename}_{timestamp}"
+    
+    # Create results directory structure
+    results_dir = Path("results") / run_name
+    results_dir.mkdir(parents=True, exist_ok=True)
+    print(f"\n{'='*60}")
+    print(f"Evaluation Run: {run_name}")
+    print(f"Results will be saved to: {results_dir}")
+    print(f"{'='*60}\n")
 
     # Set num_workers to number of CPUs if not specified
     if num_workers is None:
@@ -148,6 +168,7 @@ def main(
     
     # AUROC calculation - only compute if we have enough samples per class
     unique_classes = torch.unique(y)
+    auroc_score = None
     if len(unique_classes) >= 2 and len(y) >= 100:  # Need at least 2 classes and 100 samples for meaningful AUROC
         try:
             auroc_score = auroc(y_prob, y, task="multiclass", num_classes=num_classes, average="macro")
@@ -159,17 +180,84 @@ def main(
         print(f"AUROC: Skipped (need at least 2 classes and 100 samples for reliable AUROC)")
         print(f"  Current: {len(unique_classes)} classes, {len(y)} samples")
 
-    cm = confusion_matrix(y_pred, y, task="multiclass", num_classes=num_classes)
+    # Save metrics to JSON
+    metrics = {
+        "run_name": run_name,
+        "model_path": str(model_path),
+        "dataset_root": str(dataset_root),
+        "timestamp": datetime.now().isoformat(),
+        "total_samples": len(y),
+        "unique_classes": len(unique_classes),
+        "num_classes": num_classes,
+        "accuracy": float(acc.item()),
+        "accuracy_top5": float(acc_top5.item()),
+        "f1_score": float(f1.item()),
+        "auroc_macro": float(auroc_score.item()) if auroc_score is not None else None,
+        "evaluation_config": {
+            "batch_size": batch_size,
+            "frames_per_clip": frames_per_clip,
+            "video_size": video_size,
+            "num_workers": num_workers,
+            "seed": seed,
+            "eval_sample_size": eval_sample_size,
+        }
+    }
+    
+    metrics_file = results_dir / "metrics.json"
+    with open(metrics_file, "w") as f:
+        json.dump(metrics, f, indent=2)
+    print(f"\n✓ Metrics saved to: {metrics_file}")
 
+    # Save text summary
+    summary_file = results_dir / "summary.txt"
+    with open(summary_file, "w") as f:
+        f.write(f"{'='*60}\n")
+        f.write("Evaluation Results Summary\n")
+        f.write(f"{'='*60}\n")
+        f.write(f"Run Name: {run_name}\n")
+        f.write(f"Model: {model_path}\n")
+        f.write(f"Dataset: {dataset_root}\n")
+        f.write(f"Timestamp: {metrics['timestamp']}\n")
+        f.write(f"\n{'='*60}\n")
+        f.write("Metrics\n")
+        f.write(f"{'='*60}\n")
+        f.write(f"Total samples evaluated: {len(y)}\n")
+        f.write(f"Unique classes in evaluation set: {len(unique_classes)}\n")
+        f.write(f"Accuracy: {acc:.4f} ({acc*100:.2f}%)\n")
+        f.write(f"Top-5 Accuracy: {acc_top5:.4f} ({acc_top5*100:.2f}%)\n")
+        f.write(f"F1 Score: {f1:.4f} ({f1*100:.2f}%)\n")
+        if auroc_score is not None:
+            f.write(f"AUROC (macro): {auroc_score:.4f}\n")
+        else:
+            f.write(f"AUROC: Skipped (need at least 2 classes and 100 samples)\n")
+        f.write(f"\n{'='*60}\n")
+        f.write("Configuration\n")
+        f.write(f"{'='*60}\n")
+        for key, value in metrics["evaluation_config"].items():
+            f.write(f"{key}: {value}\n")
+    print(f"✓ Summary saved to: {summary_file}")
+
+    # Save confusion matrix
+    cm = confusion_matrix(y_pred, y, task="multiclass", num_classes=num_classes)
+    cm_file = results_dir / "confusion_matrix.png"
+    
     plt.figure(figsize=(20, 20), dpi=100)
     ax = sns.heatmap(cm, annot=False, fmt="d", xticklabels=labels, yticklabels=labels)
     ax.set_xlabel("Prediction")
     ax.set_ylabel("Ground Truth")
-    ax.set_title("Confusion Matrix")
+    ax.set_title(f"Confusion Matrix - {run_name}")
     plt.tight_layout()
-    plt.savefig("output.png", dpi=300)
+    plt.savefig(cm_file, dpi=300)
+    print(f"✓ Confusion matrix saved to: {cm_file}")
+    
     if verbose:
         plt.show()
+    else:
+        plt.close()
+    
+    print(f"\n{'='*60}")
+    print(f"All results saved to: {results_dir}")
+    print(f"{'='*60}\n")
 
 
 if __name__ == "__main__":
