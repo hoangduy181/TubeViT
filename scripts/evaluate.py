@@ -277,7 +277,7 @@ def main(
         
         # Create a custom dataset that only returns the first clip of each video
         print("==**=="*5)
-        print(f"  clip_indices_to_use: {clip_indices_to_use{:10}}")
+        print(f"  clip_indices_to_use: {clip_indices_to_use[:10]}")
         print("==**=="*5)
         val_dataset = Subset(val_set, clip_indices_to_use)
         # Print example of the dataset
