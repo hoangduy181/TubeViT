@@ -55,6 +55,20 @@ Convert ImageNet pre-trained weight to UCF101. `--num-classes` is 101 by default
 python scripts/convert_vit_weight.py
 ```
 
+## Configuration Files
+
+Instead of providing all parameters via command-line, you can use YAML configuration files:
+
+```bash
+# Training with config file
+python scripts/train.py --config configs/ucf101.yaml
+
+# Evaluation with config file  
+python scripts/evaluate.py --config configs/ucf101.yaml --model-path models/my_model.ckpt
+```
+
+CLI arguments override config file values. See `configs/README.md` for more details.
+
 ## Train
 
 Current `train.py` only train on pytorch UCF101 dataset.
@@ -87,7 +101,14 @@ Options:
 ### Examples
 
 ```commandline
+# Using config file (recommended)
+python scripts/train.py --config configs/ucf101.yaml
+
+# Using command-line arguments
 python scripts/train.py -r path/to/dataset -a path/to/annotation
+
+# Mix: config file + override some parameters
+python scripts/train.py --config configs/ucf101.yaml --batch-size 64 --max-epochs 20
 ```
 
 **Note:** By default, `--num-workers` automatically uses all available CPUs for optimal data loading performance. You can override this by specifying `--num-workers <number>` if needed.
@@ -118,6 +139,10 @@ Options:
 ### Examples
 
 ```commandline
+# Using config file (recommended)
+python scripts/evaluate.py --config configs/ucf101.yaml --model-path path/to/model.ckpt
+
+# Using command-line arguments
 python scripts/evaluate.py -r path/to/dataset -a path/to/annotation -m path/to/model.ckpt --label-path path/to/classInd.txt
 ```
 

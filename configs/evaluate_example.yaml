@@ -1,0 +1,24 @@
+# Example Configuration File for Evaluation
+# Copy this file and update the paths to match your setup
+
+# Dataset Configuration
+dataset:
+  root: "/home/user/data/ucf101"  # UPDATE THIS: Path to your UCF101 dataset
+  annotation_path: "/home/user/data/ucf101/annotations"  # UPDATE THIS: Path to annotations directory
+  label_path: "/home/user/data/ucf101/annotations/classInd.txt"  # UPDATE THIS: Path to classInd.txt
+  num_classes: 101
+
+# Evaluation Configuration
+training:
+  batch_size: 32
+  frames_per_clip: 32
+  video_size: [224, 224]
+  num_workers: null  # null = auto-detect CPU count
+  seed: 42
+
+# Metadata files
+metadata:
+  val_file: "ucf101-val-meta.pickle"
+
+# Note: model_path must be provided via --model-path CLI argument
+# since it changes for each evaluation run

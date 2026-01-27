@@ -9,3 +9,4 @@ seaborn~=0.12.2
 tensorboard~=2.15.0
 protobuf<5.0.0,>=3.20.0  # Pin protobuf version for TensorBoard compatibility
 av  # PyAV - required for torchvision video operations
+pyyaml~=6.0.1  # For configuration file support

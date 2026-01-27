@@ -1,0 +1,47 @@
+# TubeViT Configuration File for UCF101 Dataset
+# This file contains common configuration parameters for training and evaluation
+
+# Dataset Configuration
+dataset:
+  root: "/path/to/ucf101"  # Path to UCF101 dataset root directory
+  annotation_path: "/path/to/annotations"  # Path to annotation directory (containing trainlist01.txt, testlist01.txt, classInd.txt)
+  label_path: "/path/to/annotations/classInd.txt"  # Path to classInd.txt file
+  num_classes: 101  # Number of classes in UCF101
+
+# Model Configuration
+model:
+  num_layers: 12
+  num_heads: 12
+  hidden_dim: 768
+  mlp_dim: 3072
+  dropout: 0.0
+  attention_dropout: 0.0
+
+# Training Configuration
+training:
+  batch_size: 32
+  frames_per_clip: 32
+  video_size: [224, 224]  # [height, width]
+  max_epochs: 10
+  num_workers: null  # null means auto-detect (number of CPUs)
+  seed: 42
+  lr: 1e-4
+  weight_decay: 0.001
+  label_smoothing: 0.0
+  precision: "16-mixed"  # Mixed precision training
+  limit_val_batches: 0.5  # Use 50% of validation set for validation
+
+# Data Augmentation
+augmentation:
+  rand_augment:
+    magnitude: 10
+    num_layers: 2
+
+# Paths
+paths:
+  pretrained_weight: "tubevit_b_(a+iv)+(d+v)+(e+iv)+(f+v).pt"  # Path to pretrained ImageNet weights
+
+# Metadata files (will be auto-generated if not exists)
+metadata:
+  train_file: "ucf101-train-meta.pickle"
+  val_file: "ucf101-val-meta.pickle"
