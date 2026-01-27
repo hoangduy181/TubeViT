@@ -212,24 +212,65 @@ def main(
     # Get confidence scores (max probability)
     confidences = torch.max(y_prob, dim=1)[0].cpu().numpy()
     
-    # Get video paths from dataset - need to track indices correctly
+    # Get video paths from dataset - collect them by iterating through dataloader
+    # This ensures we get paths in the same order as predictions
     video_paths = []
-    if isinstance(val_dataset, Subset):
-        # If using Subset, use the subset indices
-        for idx in val_dataset.indices[:len(y)]:
-            video_path, _ = val_set.samples[val_set.indices[idx]]
-            # Convert to absolute path if relative
-            if not os.path.isabs(video_path):
-                video_path = os.path.join(val_set.root, video_path)
-            video_paths.append(video_path)
-    else:
-        # Direct access to dataset
-        for idx in range(len(y)):
-            video_path, _ = val_set.samples[val_set.indices[idx]]
-            # Convert to absolute path if relative
-            if not os.path.isabs(video_path):
-                video_path = os.path.join(val_set.root, video_path)
-            video_paths.append(video_path)
+    sample_idx = 0
+    
+    print("Collecting video paths...")
+    for batch_idx, (batch_x, batch_y) in enumerate(val_dataloader):
+        batch_size_current = batch_x.shape[0]
+        for i in range(batch_size_current):
+            try:
+                # Calculate the dataset index for this sample
+                if isinstance(val_dataset, Subset):
+                    # Get the clip index from the subset
+                    clip_idx = val_dataset.indices[sample_idx]
+                else:
+                    # Direct access
+                    clip_idx = sample_idx
+                
+                # Safety check: ensure clip_idx is within bounds
+                if clip_idx >= len(val_set.indices):
+                    print(f"Warning: clip_idx {clip_idx} >= len(val_set.indices) {len(val_set.indices)}")
+                    video_paths.append(f"unknown_video_{sample_idx}.avi")
+                    sample_idx += 1
+                    continue
+                
+                # Map clip index to video index
+                video_idx = val_set.indices[clip_idx]
+                
+                # Safety check: ensure video_idx is within bounds
+                if video_idx >= len(val_set.samples):
+                    print(f"Warning: video_idx {video_idx} >= len(val_set.samples) {len(val_set.samples)}")
+                    video_paths.append(f"unknown_video_{sample_idx}.avi")
+                    sample_idx += 1
+                    continue
+                
+                video_path, _ = val_set.samples[video_idx]
+                
+                # Convert to absolute path if relative
+                if not os.path.isabs(video_path):
+                    video_path = os.path.join(val_set.root, video_path)
+                video_paths.append(video_path)
+                sample_idx += 1
+                
+            except (IndexError, KeyError, AttributeError) as e:
+                print(f"Warning: Could not get video path for sample {sample_idx}: {e}")
+                video_paths.append(f"unknown_video_{sample_idx}.avi")
+                sample_idx += 1
+    
+    # Ensure we have the same number of video paths as predictions
+    actual_num_samples = len(y)
+    if len(video_paths) != actual_num_samples:
+        print(f"Warning: Mismatch between predictions ({actual_num_samples}) and video paths ({len(video_paths)})")
+        # Pad or truncate to match
+        if len(video_paths) < actual_num_samples:
+            video_paths.extend([f"unknown_video_{i}.avi" for i in range(len(video_paths), actual_num_samples)])
+        else:
+            video_paths = video_paths[:actual_num_samples]
+    
+    print(f"✓ Collected {len(video_paths)} video paths")
 
     print(f"\n{'='*60}")
     print("Evaluation Results")

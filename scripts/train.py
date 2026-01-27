@@ -9,6 +9,10 @@ from datetime import datetime
 from utils.constant import IMAGENET_MEAN, IMAGENET_STD
 from utils.config_loader import load_config, merge_config_with_args, get_config_value
 
+# Suppress CUDA/XLA warnings in distributed training
+# These warnings occur when multiple processes initialize CUDA libraries
+# os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Suppress TensorFlow/XLA warnings
+# os.environ['XLA_FLAGS'] = '--xla_gpu_strict_conv_algorithm_picker=false'
 
 import click
 import lightning.pytorch as pl
