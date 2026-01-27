@@ -13,7 +13,7 @@ import seaborn as sns
 import torch
 from tubevit.transforms import Normalize
 
-from torch.utils.data import DataLoader, RandomSampler
+from torch.utils.data import DataLoader, SequentialSampler
 from torchmetrics.functional import accuracy, auroc, confusion_matrix, f1_score
 from torchvision.transforms import transforms as T
 from torchvision.transforms._transforms_video import ToTensorVideo
@@ -97,14 +97,27 @@ def main(
     eval_sample_size = min(len(val_set), max(1000, len(val_set) // 10))  # At least 1000 samples or 10% of dataset
     print(f"Evaluating on {eval_sample_size} samples (out of {len(val_set)} total validation samples)")
     
-    val_sampler = RandomSampler(val_set, num_samples=eval_sample_size)
+    # Use SequentialSampler for deterministic evaluation (no shuffling)
+    # Create a subset by taking first N indices
+    from torch.utils.data import Subset
+    if eval_sample_size < len(val_set):
+        # Create subset with first eval_sample_size samples
+        indices = list(range(eval_sample_size))
+        val_subset = Subset(val_set, indices)
+        val_sampler = None  # No sampler needed, Subset handles indexing
+        val_dataset = val_subset
+    else:
+        # Use full dataset
+        val_sampler = SequentialSampler(val_set)
+        val_dataset = val_set
+    
     val_dataloader = DataLoader(
-        val_set,
+        val_dataset,
         batch_size=batch_size,
         num_workers=num_workers,
-        shuffle=False,
+        shuffle=False,  # No shuffling for evaluation
         drop_last=False,  # Don't drop last batch in evaluation
-        sampler=val_sampler,
+        sampler=val_sampler,  # None if using Subset, SequentialSampler if using full dataset
     )
 
     x, y = next(iter(val_dataloader))
