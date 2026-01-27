@@ -276,6 +276,9 @@ def main(
                 print(f"  Sample class labels: {sorted(set(sample_labels))[:20]}{'...' if unique_sample_labels > 20 else ''}")
         
         # Create a custom dataset that only returns the first clip of each video
+        print("==**=="*5)
+        print(f"  clip_indices_to_use: {clip_indices_to_use{:10}}")
+        print("==**=="*5)
         val_dataset = Subset(val_set, clip_indices_to_use)
         # Print example of the dataset
         print(f"  Example of the dataset: {val_dataset[0]}")
