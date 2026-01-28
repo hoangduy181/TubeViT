@@ -18,7 +18,7 @@ import seaborn as sns
 import torch
 from tubevit.transforms import Normalize
 
-from torch.utils.data import DataLoader, SequentialSampler, Subset
+from torch.utils.data import DataLoader, SequentialSampler, Subset, RandomSampler
 from torchmetrics.functional import accuracy, auroc, confusion_matrix, f1_score
 from torchvision.transforms import transforms as T
 from torchvision.transforms._transforms_video import ToTensorVideo
@@ -182,177 +182,17 @@ def main(
     print(f"  val_set.indices: {val_set.indices}")
     print(f"  Average clips per video: {actual_dataset_size / len(val_set.samples):.2f}")
     
-    # Filter to single clip per video if requested
-    if single_clip_per_video:
-        print(f"  Evaluation mode: Single clip per video (1 clip per video)")
-        # Find the first clip index for each video
-        # Strategy: Iterate through ALL clips to build a complete mapping
-        video_to_first_clip = {}  # video_idx -> first clip_idx
-        
-        # Debug: Check what video indices we see in the first 1000 clips
-        first_1000_video_indices = []
-        first_1000_labels = []
-        for clip_idx in range(min(1000, actual_dataset_size)):
-            if clip_idx >= len(val_set.indices):
-                continue
-            video_idx = val_set.indices[clip_idx]
-            first_1000_video_indices.append(video_idx)
-            try:
-                _, label = val_set[clip_idx]
-                first_1000_labels.append(label)
-            except:
-                pass
-        
-        if first_1000_labels:
-            unique_first_1000_labels = len(set(first_1000_labels))
-            unique_first_1000_videos = len(set(first_1000_video_indices))
-            print(f"  Debug: First 1000 clips span {unique_first_1000_videos} unique videos and {unique_first_1000_labels} unique classes")
-            print(f"  Debug: First 1000 clips labels: {sorted(set(first_1000_labels))[:20]}{'...' if unique_first_1000_labels > 20 else ''}")
-        
-        # First pass: Iterate through all clips to find first clip of each video
-        for clip_idx in range(actual_dataset_size):
-            if clip_idx >= len(val_set.indices):
-                continue
-            video_idx = val_set.indices[clip_idx]
-            # Only store if we haven't seen this video_idx yet (first occurrence)
-            if video_idx not in video_to_first_clip:
-                video_to_first_clip[video_idx] = clip_idx
-        
-        # Second pass: Ensure we have clips for ALL videos
-        # If some videos are missing, search for them explicitly
-        all_video_indices_set = set(range(len(val_set.samples)))
-        found_video_indices_set = set(video_to_first_clip.keys())
-        
-        if len(found_video_indices_set) < len(all_video_indices_set):
-            # Some videos are missing - search for them
-            missing_videos = all_video_indices_set - found_video_indices_set
-            print(f"  First pass found {len(found_video_indices_set)} videos, missing {len(missing_videos)} videos")
-            print(f"  Searching for missing videos...")
-            
-            # Search through all clips again for missing videos
-            for video_idx in sorted(missing_videos):
-                for clip_idx in range(actual_dataset_size):
-                    if clip_idx >= len(val_set.indices):
-                        continue
-                    if val_set.indices[clip_idx] == video_idx:
-                        video_to_first_clip[video_idx] = clip_idx
-                        break
-        
-        # Ensure we have clips for ALL videos in the dataset
-        all_video_indices = set(range(len(val_set.samples)))
-        found_video_indices = set(video_to_first_clip.keys())
-        # print(f"  all_video_indices: {all_video_indices[:10]}")
-        print(f"  found_video_indices: {video_to_first_clip.keys()}")
-        missing_videos = all_video_indices - found_video_indices
-        
-        if missing_videos:
-            print(f"  Warning: {len(missing_videos)} videos have no clips! Trying to find clips for missing videos...")
-            # Try to find clips for missing videos by checking if they exist in the dataset
-            for video_idx in sorted(missing_videos):
-                # Check if this video_idx appears anywhere in val_set.indices
-                for clip_idx in range(actual_dataset_size):
-                    if clip_idx >= len(val_set.indices):
-                        continue
-                    if val_set.indices[clip_idx] == video_idx:
-                        video_to_first_clip[video_idx] = clip_idx
-                        break
-        
-        # Create list of clip indices to use (first clip of each video)
-        # Sort by video_idx to maintain consistent ordering across all videos
-        video_indices_sorted = sorted(video_to_first_clip.keys())
-        print(f"  video_indices_sorted: {video_indices_sorted[:10]}")
-        print(f"  video_to_first_clip: {list(video_to_first_clip.values())[:10]}")
-        clip_indices_to_use = [video_to_first_clip[vid_idx] for vid_idx in video_indices_sorted]
-        
-        print(f"  Using {len(clip_indices_to_use)} clips (1 per video)")
-        print(f"  Dataset has {len(val_set.samples)} videos")
-        print(f"  Found clips for {len(video_indices_sorted)} videos")
-        
-        # Verify we have clips from all videos
-        if len(video_indices_sorted) != len(val_set.samples):
-            print(f"  Warning: Found clips for {len(video_indices_sorted)} videos, but dataset has {len(val_set.samples)} videos")
-            print(f"  This might indicate some videos have no clips in the dataset")
-        
-        # Debug: Check class distribution in selected clips
-        if len(clip_indices_to_use) > 0:
-            sample_labels = []
-            sample_labels_from_getitem = []  # Labels from __getitem__
-            for clip_idx in clip_indices_to_use[:min(100, len(clip_indices_to_use))]:  # Sample first 100
-                try:
-                    video_idx = val_set.indices[clip_idx]
-                    label_from_samples = val_set.samples[video_idx][1]
-                    sample_labels.append(label_from_samples)
-                    
-                    # Also check via __getitem__
-                    _, label_from_getitem = val_set[clip_idx]
-                    sample_labels_from_getitem.append(label_from_getitem)
-                except Exception as e:
-                    pass
-            if sample_labels:
-                unique_sample_labels = len(set(sample_labels))
-                unique_getitem_labels = len(set(sample_labels_from_getitem)) if sample_labels_from_getitem else 0
-                sample_video_indices = []
-                for clip_idx in clip_indices_to_use[:min(100, len(clip_indices_to_use))]:
-                    try:
-                        video_idx = val_set.indices[clip_idx]
-                        sample_video_indices.append(video_idx)
-                    except:
-                        pass
-                unique_sample_videos = len(set(sample_video_indices)) if sample_video_indices else 0
-                print(f"  Sample check: Found {unique_sample_labels} unique classes (from samples) in first {len(sample_labels)} selected clips")
-                print(f"  Sample check: Found {unique_getitem_labels} unique classes (from __getitem__) in first {len(sample_labels_from_getitem)} selected clips")
-                print(f"  Sample check: Found {unique_sample_videos} unique videos in first {len(sample_labels)} selected clips")
-                print(f"  Sample class labels (from samples): {sorted(set(sample_labels))[:20]}{'...' if unique_sample_labels > 20 else ''}")
-                print(f"  Sample class labels (from __getitem__): {sorted(set(sample_labels_from_getitem))[:20]}{'...' if unique_getitem_labels > 20 else ''}")
-                if unique_sample_labels == 1 or unique_getitem_labels == 1:
-                    print(f"  WARNING: All labels are the same! This indicates we're only selecting clips from one class.")
-        
-        # Create a custom dataset that only returns the first clip of each video
-        print("==**=="*5)
-        print(f"  clip_indices_to_use: {clip_indices_to_use[:10]}")
-        print(f"  clip_indices_to_use length: {len(clip_indices_to_use)}")
-        print("==**=="*5)
-        val_dataset = Subset(val_set, clip_indices_to_use)
-        
-        # Debug: Check labels from the Subset dataset
-        print(f"  Debug: Checking labels from Subset dataset...")
-        subset_labels = []
-        for debug_i in range(min(20, len(val_dataset))):
-            try:
-                _, debug_label = val_dataset[debug_i]
-                subset_labels.append(debug_label)
-                if debug_i < 10:
-                    debug_clip_idx = clip_indices_to_use[debug_i]
-                    debug_video_idx = val_set.indices[debug_clip_idx]
-                    debug_path, debug_label_from_samples = val_set.samples[debug_video_idx]
-                    print(f"    Subset[{debug_i}]: clip_idx={debug_clip_idx}, video_idx={debug_video_idx}, "
-                          f"label={debug_label}, label_from_samples={debug_label_from_samples}, "
-                          f"path={os.path.basename(debug_path)}")
-            except Exception as e:
-                print(f"    Subset[{debug_i}]: Error - {e}")
-        
-        if subset_labels:
-            unique_subset_labels = len(set(subset_labels))
-            print(f"  Found {unique_subset_labels} unique classes in first {len(subset_labels)} Subset samples")
-            print(f"  Labels: {sorted(set(subset_labels))[:20]}{'...' if unique_subset_labels > 20 else ''}")
-            if unique_subset_labels == 1:
-                print(f"  WARNING: All labels are the same ({subset_labels[0]})! This indicates a problem.")
-        
-        print(f"size of val_dataset: {len(val_dataset)} (should be {len(clip_indices_to_use)})")
-    else:
-        print(f"  Evaluation mode: Video-level (will aggregate predictions from multiple clips per video)")
-        print(f"  Evaluating on: {actual_dataset_size} clips from {len(val_set.samples)} videos (full dataset)")
-        val_dataset = val_set
-    
-    # Use SequentialSampler for deterministic evaluation (no shuffling)
-    val_sampler = SequentialSampler(val_dataset)
+    # Use RandomSampler to sample a subset of the dataset
+    num_samples = len(val_set) // 5000
+    print(f"  Using RandomSampler with {num_samples} samples (1/{5000} of dataset)")
+    val_sampler = RandomSampler(val_set, num_samples=num_samples)
     
     val_dataloader = DataLoader(
-        val_dataset,
+        val_set,
         batch_size=batch_size,
         num_workers=num_workers,
-        shuffle=False,  # No shuffling for evaluation
-        drop_last=False,  # Don't drop last batch in evaluation
+        shuffle=False,
+        drop_last=True,
         sampler=val_sampler,
     )
 
@@ -430,149 +270,74 @@ def main(
     
     actual_num_clips = len(y_clips)
     
-    if single_clip_per_video:
-        # Single clip per video mode: no aggregation needed
-        print(f"\n{'='*60}")
-        print("Single clip per video mode (no aggregation)")
-        print(f"{'='*60}")
-        
-        # Get video paths and labels for each clip
-        video_paths = []
-        y_labels = []  # Ground truth labels from dataset
-        
-        # Debug: Check labels directly from dataset for first few clips
-        print(f"  Debug: Checking labels directly from dataset...")
-        if 'clip_indices_to_use' in locals():
-            for debug_i in range(min(10, len(clip_indices_to_use))):
-                try:
-                    debug_clip_idx = clip_indices_to_use[debug_i]
-                    # Get label directly from dataset using __getitem__
-                    _, debug_label_from_dataset = val_set[debug_clip_idx]
-                    # Also check via samples
-                    debug_video_idx_from_indices = val_set.indices[debug_clip_idx]
-                    debug_path_from_samples, debug_label_from_samples = val_set.samples[debug_video_idx_from_indices]
-                    print(f"    Clip {debug_i}: clip_idx={debug_clip_idx}, video_idx={debug_video_idx_from_indices}, "
-                          f"label_from_dataset={debug_label_from_dataset}, label_from_samples={debug_label_from_samples}, "
-                          f"path={os.path.basename(debug_path_from_samples)}")
-                except Exception as e:
-                    print(f"    Clip {debug_i}: Error - {e}")
-        
-        for i in range(len(y_clips)):
-            try:
-                # Get the clip index from the subset
-                if isinstance(val_dataset, Subset):
-                    clip_idx = val_dataset.indices[i]
-                else:
-                    clip_idx = i
-                
-                if clip_idx >= len(val_set.indices):
-                    video_paths.append(f"unknown_video_{i}.avi")
-                    y_labels.append(torch.tensor(0))  # Fallback label
-                    continue
-                
-                # IMPORTANT: val_set.indices[clip_idx] gives us the video_idx (from video_clips)
-                # Then we need to map video_idx to sample_idx using val_set.indices again
-                # Actually wait - let's get the label directly from the dataset instead
-                # This is more reliable than trying to map indices
-                _, label = val_set[clip_idx]  # Get label directly from dataset
-                
-                # Also get video_idx for path lookup
-                video_idx = val_set.indices[clip_idx]
-                if video_idx >= len(val_set.samples):
-                    video_paths.append(f"unknown_video_{i}.avi")
-                    y_labels.append(torch.tensor(label))  # Use label from dataset even if path fails
-                    continue
-                
-                # Get video path from samples
-                video_path, _ = val_set.samples[video_idx]  # Don't use label from samples, use from dataset
+
+        # Aggregate predictions per video
+    print(f"\n{'='*60}")
+    print("Aggregating predictions per video...")
+    print(f"{'='*60}")
+    
+    # Group clips by video index
+    # IMPORTANT: With RandomSampler, we need to track which clip indices were sampled
+    # We'll iterate through the sampler to get the actual clip indices
+    video_to_clips = {}  # video_idx -> list of (clip_idx, y, y_prob)
+    video_paths_map = {}  # video_idx -> video_path
+    
+    print(f"Processing {actual_num_clips} clips...")
+    
+    # Get the actual clip indices that were sampled by RandomSampler
+    # The sampler's __iter__ returns indices in random order
+    sampled_clip_indices = list(val_sampler)
+    
+    # Debug: Check what video indices we're actually processing
+    video_indices_in_clips = set()
+    for i in range(min(100, len(sampled_clip_indices))):
+        try:
+            clip_idx = sampled_clip_indices[i]
+            # Get video_idx from VideoClips (same as __getitem__ does)
+            _, _, _, video_idx = val_set.video_clips.get_clip(clip_idx)
+            # Map video_idx to sample_idx using self.indices
+            sample_idx = val_set.indices[video_idx]
+            video_indices_in_clips.add(video_idx)
+        except:
+            pass
+    print(f"  Sample check: Found {len(video_indices_in_clips)} unique video indices in first 100 clips")
+    
+    for pred_idx in range(actual_num_clips):
+        try:
+            # Get the actual clip index that was sampled
+            clip_idx = sampled_clip_indices[pred_idx] if pred_idx < len(sampled_clip_indices) else pred_idx
+            
+            # Get video_idx from VideoClips (same as __getitem__ does internally)
+            _, _, _, video_idx = val_set.video_clips.get_clip(clip_idx)
+            
+            # Map video_idx to sample_idx using self.indices (same as __getitem__ does)
+            sample_idx = val_set.indices[video_idx]
+            
+            # Safety check: ensure sample_idx is within bounds
+            if sample_idx >= len(val_set.samples):
+                print(f"Warning: sample_idx {sample_idx} >= len(val_set.samples) {len(val_set.samples)}")
+                continue
+            
+            # Store video path and label (same for all clips from this video)
+            if video_idx not in video_paths_map:
+                video_path, label = val_set.samples[sample_idx]
+                # Convert to absolute path if relative
                 if not os.path.isabs(video_path):
                     video_path = os.path.join(val_set.root, video_path)
-                video_paths.append(video_path)
-                y_labels.append(torch.tensor(label))  # Use label from dataset.__getitem__
-            except (IndexError, KeyError, AttributeError) as e:
-                print(f"  Warning: Error getting label for clip {i}: {e}")
-                video_paths.append(f"unknown_video_{i}.avi")
-                y_labels.append(torch.tensor(0))  # Fallback label
-        
-        # Use clip predictions directly (1 clip = 1 video)
-        # BUT use labels from dataset, not from predictions (which may be wrong)
-        y = torch.stack(y_labels)  # Use dataset labels
-        y_prob = y_prob_clips
-        y_pred = y_pred_clips
-        
-        # Verify we have predictions for all classes
-        unique_labels = torch.unique(y)
-        print(f"✓ Using {len(y)} video predictions (1 clip per video)")
-        print(f"  Unique classes in dataset labels: {len(unique_labels)} (should be {num_classes} or close)")
-        print(f"  Unique classes in prediction labels: {len(torch.unique(y_clips))}")
-        if len(unique_labels) < num_classes // 2:
-            print(f"  WARNING: Only {len(unique_labels)} unique classes found! This might indicate a problem.")
-        if len(torch.unique(y_clips)) == 1:
-            print(f"  NOTE: Prediction labels only have 1 class, but using dataset labels instead.")
-    else:
-        # Multiple clips per video mode: aggregate predictions
-        print(f"\n{'='*60}")
-        print("Aggregating predictions per video...")
-        print(f"{'='*60}")
-        
-        # Group clips by video index
-        # IMPORTANT: Predictions are in the same order as the dataloader iterations
-        # which matches the dataset order (no subset, so clip_idx in predictions matches dataset clip_idx)
-        video_to_clips = {}  # video_idx -> list of (clip_idx, y, y_prob)
-        video_paths_map = {}  # video_idx -> video_path
-        
-        print(f"Processing {actual_num_clips} clips...")
-        
-        # Debug: Check what video indices we're actually processing
-        video_indices_in_clips = set()
-        for pred_idx in range(min(100, actual_num_clips)):  # Sample first 100
-            try:
-                clip_idx = pred_idx
-                if clip_idx < len(val_set.indices):
-                    video_idx = val_set.indices[clip_idx]
-                    video_indices_in_clips.add(video_idx)
-            except:
-                pass
-        print(f"  Sample check: Found {len(video_indices_in_clips)} unique video indices in first 100 clips")
-        
-        for pred_idx in range(actual_num_clips):
-            try:
-                # pred_idx corresponds to the clip index in the original dataset
-                # (since we're not using a Subset in this branch)
-                clip_idx = pred_idx
-                
-                # Map clip index to video index using val_set.indices
-                if clip_idx >= len(val_set.indices):
-                    print(f"Warning: clip_idx {clip_idx} >= len(val_set.indices) {len(val_set.indices)}")
-                    continue
-                
-                video_idx = val_set.indices[clip_idx]
-                
-                # Safety check: ensure video_idx is within bounds
-                if video_idx >= len(val_set.samples):
-                    print(f"Warning: video_idx {video_idx} >= len(val_set.samples) {len(val_set.samples)}")
-                    continue
-                
-                # Store video path (same for all clips from this video)
-                if video_idx not in video_paths_map:
-                    video_path, label = val_set.samples[video_idx]
-                    # Convert to absolute path if relative
-                    if not os.path.isabs(video_path):
-                        video_path = os.path.join(val_set.root, video_path)
-                    video_paths_map[video_idx] = video_path
-                
-                # Group clip predictions by video
-                if video_idx not in video_to_clips:
-                    video_to_clips[video_idx] = []
-                video_to_clips[video_idx].append({
-                    'clip_idx': clip_idx,
-                    'y': y_clips[pred_idx],  # Use pred_idx to index predictions
-                    'y_prob': y_prob_clips[pred_idx],  # Use pred_idx to index predictions
-                })
-                
-            except (IndexError, KeyError, AttributeError) as e:
-                print(f"Warning: Could not process clip {pred_idx}: {e}")
-                continue
+                video_paths_map[video_idx] = video_path
+            
+            # Group clip predictions by video
+            if video_idx not in video_to_clips:
+                video_to_clips[video_idx] = []
+            video_to_clips[video_idx].append({
+                'clip_idx': clip_idx,
+                'y': y_clips[pred_idx],  # Use pred_idx to index predictions
+                'y_prob': y_prob_clips[pred_idx],  # Use pred_idx to index predictions
+            })
+            
+        except (IndexError, KeyError, AttributeError) as e:
+            print(f"Warning: Could not process clip {pred_idx}: {e}")
+            continue
         
         # Aggregate predictions per video (average probabilities)
         print(f"Aggregating {len(video_to_clips)} videos from {actual_num_clips} clips...")
@@ -591,7 +356,9 @@ def main(
             
             # Get ground truth label from dataset (more reliable than from predictions)
             try:
-                _, dataset_label = val_set.samples[video_idx]
+                # Map video_idx to sample_idx using self.indices
+                sample_idx = val_set.indices[video_idx]
+                _, dataset_label = val_set.samples[sample_idx]
                 dataset_labels.add(dataset_label)
             except:
                 pass
@@ -605,10 +372,16 @@ def main(
             avg_prob = torch.stack(prob_tensors).mean(dim=0)
             
             # Use dataset label if available, otherwise use prediction label
-            if video_idx < len(val_set.samples):
-                _, dataset_label = val_set.samples[video_idx]
-                y_videos.append(torch.tensor(dataset_label))
-            else:
+            try:
+                # Map video_idx to sample_idx using self.indices (same as __getitem__ does)
+                sample_idx = val_set.indices[video_idx]
+                if sample_idx < len(val_set.samples):
+                    _, dataset_label = val_set.samples[sample_idx]
+                    y_videos.append(torch.tensor(dataset_label))
+                else:
+                    y_videos.append(clips_data[0]['y'])
+            except (IndexError, KeyError):
+                # Fallback to prediction label if mapping fails
                 y_videos.append(clips_data[0]['y'])
             
             y_prob_videos.append(avg_prob)
@@ -638,13 +411,11 @@ def main(
     confidences = torch.max(y_prob, dim=1)[0].cpu().numpy()
 
     print(f"\n{'='*60}")
-    eval_mode = "Single clip per video" if single_clip_per_video else "Video-level (aggregated)"
-    print(f"Evaluation Results ({eval_mode})")
+    print(f"Evaluation Results (Video-level aggregated)")
     print(f"{'='*60}")
     print(f"Total videos evaluated: {len(y)}")
     print(f"Total clips processed: {actual_num_clips}")
-    if not single_clip_per_video:
-        print(f"Average clips per video: {actual_num_clips / len(y):.2f}")
+    print(f"Average clips per video: {actual_num_clips / len(y):.2f}" if len(y) > 0 else "N/A")
     print(f"Unique classes in evaluation set: {len(torch.unique(y))}")
     
     acc = accuracy(y_prob, y, task="multiclass", num_classes=num_classes)
@@ -675,11 +446,11 @@ def main(
         "model_path": str(model_path),
         "dataset_root": str(dataset_root),
         "timestamp": datetime.now().isoformat(),
-        "evaluation_level": "single_clip" if single_clip_per_video else "video_aggregated",  # Evaluation mode
-        "single_clip_per_video": single_clip_per_video,
+        "evaluation_level": "video_aggregated",  # Evaluation mode
+        "single_clip_per_video": False,
         "total_videos": len(y),
         "total_clips_processed": actual_num_clips,
-        "average_clips_per_video": actual_num_clips / len(y) if len(y) > 0 and not single_clip_per_video else 1.0,
+        "average_clips_per_video": actual_num_clips / len(y) if len(y) > 0 else 0.0,
         "unique_classes": len(unique_classes),
         "num_classes": num_classes,
         "accuracy": float(acc.item()),
@@ -704,7 +475,9 @@ def main(
             "num_workers": num_workers,
             "seed": seed,
             "eval_sample_size": actual_dataset_size,  # Always use full dataset
-            "aggregation_method": "none" if single_clip_per_video else "average_probabilities",  # How clips are aggregated per video
+            "aggregation_method": "average_probabilities",  # How clips are aggregated per video
+            "sampler": "RandomSampler",
+            "num_samples": len(val_set) // 5000,
         }
     }
     
@@ -726,8 +499,7 @@ def main(
         f.write(f"\n{'='*60}\n")
         f.write("Metrics\n")
         f.write(f"{'='*60}\n")
-        eval_mode_desc = "Single clip per video" if single_clip_per_video else "Video-level (aggregated from clips)"
-        f.write(f"Evaluation level: {eval_mode_desc}\n")
+        f.write(f"Evaluation level: Video-level (aggregated from clips)\n")
         f.write(f"Total videos evaluated: {len(y)}\n")
         f.write(f"Total clips processed: {actual_num_clips}\n")
         f.write(f"Average clips per video: {actual_num_clips / len(y):.2f}\n")
@@ -893,12 +665,8 @@ def main(
         print(f"    - high_conf_wrong_*.avi: Top {num_incorrect} highest confidence incorrect predictions")
     if len(correct_indices) > 0:
         print(f"    - low_conf_right_*.avi: Top {num_correct} lowest confidence correct predictions")
-    if single_clip_per_video:
-        print(f"\nNote: Evaluation uses 1 clip per video (faster but less robust).")
-        print(f"      {actual_num_clips} clips were processed (1 clip = 1 video).")
-    else:
-        print(f"\nNote: Evaluation is performed at video-level by aggregating predictions from multiple clips per video.")
-        print(f"      {actual_num_clips} clips were processed and aggregated into {len(y)} video-level predictions.")
+    print(f"\nNote: Evaluation is performed at video-level by aggregating predictions from multiple clips per video.")
+    print(f"      {actual_num_clips} clips were processed and aggregated into {len(y)} video-level predictions.")
     print(f"{'='*60}\n")
 
 
