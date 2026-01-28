@@ -5,6 +5,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import os
 import pickle
+from datetime import datetime
 
 import click
 import matplotlib.pyplot as plt
@@ -13,7 +14,7 @@ import seaborn as sns
 import torch
 from pytorchvideo.transforms import Normalize
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
-from torchmetrics.functional import accuracy, auroc, confusion_matrix, f1_score
+from torchmetrics.functional import accuracy, auroc, confusion_matrix, f1_score, precision, recall
 from torchvision.transforms import transforms as T
 from torchvision.transforms._transforms_video import ToTensorVideo
 
@@ -38,6 +39,7 @@ torch.set_float32_matmul_precision('medium')
 @click.option("--num-workers", type=int, default=None, help="Number of DataLoader workers. Defaults to number of CPUs.")
 @click.option("--seed", type=int, default=42, help="random seed.")
 @click.option("--verbose", type=bool, is_flag=True, show_default=True, default=False, help="Show input video")
+@click.option("--run-name", type=str, default=None, help="Name for this evaluation run. If not provided, will be auto-generated.")
 def main(
     dataset_root,
     model_path,
@@ -50,8 +52,24 @@ def main(
     num_workers,
     seed,
     verbose,
+    run_name,
 ):
     pl.seed_everything(seed)
+
+    # Generate run name if not provided
+    if run_name is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        model_name = Path(model_path).stem
+        run_name = f"eval_{model_name}_{timestamp}"
+    
+    print(f"\n{'='*60}")
+    print(f"Evaluation Run: {run_name}")
+    print(f"{'='*60}")
+
+    # Create results directory
+    results_dir = Path("results") / run_name
+    results_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Results will be saved to: {results_dir}")
 
     # Set num_workers to number of CPUs if not specified
     if num_workers is None:
@@ -119,16 +137,107 @@ def main(
     print("f1_score:", f1_score(y_prob, y, task="multiclass", num_classes=num_classes))
 
     cm = confusion_matrix(y_pred, y, task="multiclass", num_classes=num_classes)
+    
+    # Convert to numpy for processing
+    cm_numpy = cm.cpu().numpy() if hasattr(cm, 'cpu') else cm.numpy() if hasattr(cm, 'numpy') else cm
+    
+    # Normalize confusion matrix to percentages (row-wise normalization)
+    # Each row sums to 100% (percentage of predictions for each true class)
+    cm_percent = cm_numpy.astype(float)
+    row_sums = cm_percent.sum(axis=1, keepdims=True)
+    # Avoid division by zero
+    row_sums[row_sums == 0] = 1
+    cm_percent = (cm_percent / row_sums) * 100
 
+    # Save confusion matrix as PNG (with percentages)
+    cm_file = results_dir / "confusion_matrix.png"
     plt.figure(figsize=(20, 20), dpi=100)
-    ax = sns.heatmap(cm, annot=False, fmt="d", xticklabels=labels, yticklabels=labels)
+    ax = sns.heatmap(cm_percent, annot=True, fmt=".2f", xticklabels=labels, yticklabels=labels, 
+                     cmap='Blues', cbar_kws={'label': 'Percentage (%)'})
     ax.set_xlabel("Prediction")
     ax.set_ylabel("Ground Truth")
-    ax.set_title("Confusion Matrix")
+    ax.set_title(f"Confusion Matrix (Percentage) - {run_name}")
     plt.tight_layout()
-    plt.savefig("output.png", dpi=300)
+    plt.savefig(cm_file, dpi=300)
+    print(f"✓ Confusion matrix (PNG) saved to: {cm_file}")
     if verbose:
         plt.show()
+    else:
+        plt.close()
+    
+    # Save confusion matrix as CSV (with percentages)
+    import csv
+    cm_csv_file = results_dir / "confusion_matrix.csv"
+    with open(cm_csv_file, 'w', newline='') as f:
+        writer = csv.writer(f)
+        # Write header row
+        writer.writerow([''] + labels)
+        # Write data rows with percentages
+        for i, label in enumerate(labels):
+            row = [label] + [f"{val:.2f}%" for val in cm_percent[i]]
+            writer.writerow(row)
+    print(f"✓ Confusion matrix (CSV) saved to: {cm_csv_file}")
+    
+    # Save summary with precision and recall
+    prec_macro = precision(y_prob, y, task="multiclass", num_classes=num_classes, average="macro")
+    prec_micro = precision(y_prob, y, task="multiclass", num_classes=num_classes, average="micro")
+    rec_macro = recall(y_prob, y, task="multiclass", num_classes=num_classes, average="macro")
+    rec_micro = recall(y_prob, y, task="multiclass", num_classes=num_classes, average="micro")
+    f1_macro = f1_score(y_prob, y, task="multiclass", num_classes=num_classes, average="macro")
+    f1_micro = f1_score(y_prob, y, task="multiclass", num_classes=num_classes, average="micro")
+    
+    # Calculate per-class precision and recall
+    prec_per_class = precision(y_prob, y, task="multiclass", num_classes=num_classes, average="none")
+    rec_per_class = recall(y_prob, y, task="multiclass", num_classes=num_classes, average="none")
+    
+    acc = accuracy(y_prob, y, task="multiclass", num_classes=num_classes)
+    
+    summary_file = results_dir / "summary.txt"
+    with open(summary_file, "w") as f:
+        f.write(f"{'='*60}\n")
+        f.write("Evaluation Summary\n")
+        f.write(f"{'='*60}\n")
+        f.write(f"Run Name: {run_name}\n")
+        f.write(f"Model: {model_path}\n")
+        f.write(f"Dataset: {dataset_root}\n")
+        f.write(f"Timestamp: {datetime.now().isoformat()}\n")
+        f.write(f"\n{'='*60}\n")
+        f.write("Overall Metrics\n")
+        f.write(f"{'='*60}\n")
+        f.write(f"Total samples evaluated: {len(y)}\n")
+        f.write(f"Number of classes: {num_classes}\n")
+        f.write(f"\nAccuracy: {acc:.4f} ({acc*100:.2f}%)\n")
+        f.write(f"\nPrecision:\n")
+        f.write(f"  Macro: {prec_macro:.4f} ({prec_macro*100:.2f}%)\n")
+        f.write(f"  Micro: {prec_micro:.4f} ({prec_micro*100:.2f}%)\n")
+        f.write(f"\nRecall:\n")
+        f.write(f"  Macro: {rec_macro:.4f} ({rec_macro*100:.2f}%)\n")
+        f.write(f"  Micro: {rec_micro:.4f} ({rec_micro*100:.2f}%)\n")
+        f.write(f"\nF1 Score:\n")
+        f.write(f"  Macro: {f1_macro:.4f} ({f1_macro*100:.2f}%)\n")
+        f.write(f"  Micro: {f1_micro:.4f} ({f1_micro*100:.2f}%)\n")
+        f.write(f"\n{'='*60}\n")
+        f.write("Per-Class Metrics\n")
+        f.write(f"{'='*60}\n")
+        f.write(f"{'Class':<30} {'Precision':<12} {'Recall':<12} {'F1':<12}\n")
+        f.write("-" * 66 + "\n")
+        for i in range(num_classes):
+            class_name = labels[i] if i < len(labels) else f"Class_{i}"
+            prec_val = prec_per_class[i].item()
+            rec_val = rec_per_class[i].item()
+            f1_val = 2 * (prec_val * rec_val) / (prec_val + rec_val) if (prec_val + rec_val) > 0 else 0.0
+            f.write(f"{class_name:<30} {prec_val:<12.4f} {rec_val:<12.4f} {f1_val:<12.4f}\n")
+    
+    print(f"✓ Summary saved to: {summary_file}")
+    
+    print(f"\n{'='*60}")
+    print(f"Results saved to: {results_dir}")
+    print(f"{'='*60}")
+    print(f"\nSaved files:")
+    print(f"  ✓ summary.txt: Evaluation summary with precision, recall, and per-class metrics")
+    print(f"  ✓ confusion_matrix.png: Confusion matrix visualization")
+    print(f"  ✓ confusion_matrix.csv: Confusion matrix in CSV format")
+    print(f"{'='*60}\n")
 
 
 if __name__ == "__main__":
