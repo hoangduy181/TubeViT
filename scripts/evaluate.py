@@ -149,26 +149,54 @@ def main(
     row_sums[row_sums == 0] = 1
     cm_percent = (cm_percent / row_sums) * 100
 
-    # Save confusion matrix as PNG (with percentages)
-    cm_file = results_dir / "confusion_matrix.png"
+    # Save confusion matrix as PNG (with raw counts, no annotations)
+    cm_count_file = results_dir / "confusion_matrix_count.png"
     plt.figure(figsize=(20, 20), dpi=100)
-    ax = sns.heatmap(cm_percent, annot=True, fmt=".2f", xticklabels=labels, yticklabels=labels, 
-                     cmap='Blues', cbar_kws={'label': 'Percentage (%)'})
+    ax = sns.heatmap(cm_numpy, annot=False, fmt="d", xticklabels=labels, yticklabels=labels, 
+                     cmap='Blues', cbar_kws={'label': 'Count'})
     ax.set_xlabel("Prediction")
     ax.set_ylabel("Ground Truth")
-    ax.set_title(f"Confusion Matrix (Percentage) - {run_name}")
+    ax.set_title(f"Confusion Matrix (Count) - {run_name}")
     plt.tight_layout()
-    plt.savefig(cm_file, dpi=300)
-    print(f"✓ Confusion matrix (PNG) saved to: {cm_file}")
+    plt.savefig(cm_count_file, dpi=300)
+    print(f"✓ Confusion matrix (count PNG) saved to: {cm_count_file}")
     if verbose:
         plt.show()
     else:
         plt.close()
     
-    # Save confusion matrix as CSV (with percentages)
+    # Save confusion matrix as PNG (with percentages, no annotations)
+    cm_percent_file = results_dir / "confusion_matrix_percent.png"
+    plt.figure(figsize=(20, 20), dpi=100)
+    ax = sns.heatmap(cm_percent, annot=False, fmt=".2f", xticklabels=labels, yticklabels=labels, 
+                     cmap='Blues', cbar_kws={'label': 'Percentage (%)'})
+    ax.set_xlabel("Prediction")
+    ax.set_ylabel("Ground Truth")
+    ax.set_title(f"Confusion Matrix (Percentage) - {run_name}")
+    plt.tight_layout()
+    plt.savefig(cm_percent_file, dpi=300)
+    print(f"✓ Confusion matrix (percent PNG) saved to: {cm_percent_file}")
+    if verbose:
+        plt.show()
+    else:
+        plt.close()
+    
+    # Save confusion matrix as CSV (with raw counts)
     import csv
-    cm_csv_file = results_dir / "confusion_matrix.csv"
-    with open(cm_csv_file, 'w', newline='') as f:
+    cm_count_csv_file = results_dir / "confusion_matrix_count.csv"
+    with open(cm_count_csv_file, 'w', newline='') as f:
+        writer = csv.writer(f)
+        # Write header row
+        writer.writerow([''] + labels)
+        # Write data rows with counts
+        for i, label in enumerate(labels):
+            row = [label] + cm_numpy[i].tolist()
+            writer.writerow(row)
+    print(f"✓ Confusion matrix (count CSV) saved to: {cm_count_csv_file}")
+    
+    # Save confusion matrix as CSV (with percentages)
+    cm_percent_csv_file = results_dir / "confusion_matrix_percent.csv"
+    with open(cm_percent_csv_file, 'w', newline='') as f:
         writer = csv.writer(f)
         # Write header row
         writer.writerow([''] + labels)
@@ -176,7 +204,7 @@ def main(
         for i, label in enumerate(labels):
             row = [label] + [f"{val:.2f}%" for val in cm_percent[i]]
             writer.writerow(row)
-    print(f"✓ Confusion matrix (CSV) saved to: {cm_csv_file}")
+    print(f"✓ Confusion matrix (percent CSV) saved to: {cm_percent_csv_file}")
     
     # Save summary with precision and recall
     prec_macro = precision(y_prob, y, task="multiclass", num_classes=num_classes, average="macro")
@@ -235,8 +263,10 @@ def main(
     print(f"{'='*60}")
     print(f"\nSaved files:")
     print(f"  ✓ summary.txt: Evaluation summary with precision, recall, and per-class metrics")
-    print(f"  ✓ confusion_matrix.png: Confusion matrix visualization")
-    print(f"  ✓ confusion_matrix.csv: Confusion matrix in CSV format")
+    print(f"  ✓ confusion_matrix_count.png: Confusion matrix visualization (counts)")
+    print(f"  ✓ confusion_matrix_percent.png: Confusion matrix visualization (percentages)")
+    print(f"  ✓ confusion_matrix_count.csv: Confusion matrix in CSV format (counts)")
+    print(f"  ✓ confusion_matrix_percent.csv: Confusion matrix in CSV format (percentages)")
     print(f"{'='*60}\n")
 
 
