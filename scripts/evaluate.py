@@ -12,7 +12,7 @@ import lightning.pytorch as pl
 import seaborn as sns
 import torch
 from pytorchvideo.transforms import Normalize
-from torch.utils.data import DataLoader, RandomSampler
+from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from torchmetrics.functional import accuracy, auroc, confusion_matrix, f1_score
 from torchvision.transforms import transforms as T
 from torchvision.transforms._transforms_video import ToTensorVideo
@@ -90,7 +90,8 @@ def main(
         with open(val_metadata_file, "wb") as f:
             pickle.dump(val_set.metadata, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-    val_sampler = RandomSampler(val_set, num_samples=len(val_set) // 5000)
+    # val_sampler = RandomSampler(val_set, num_samples=len(val_set) // 5000)
+    val_sampler = SequentialSampler(val_set)
     val_dataloader = DataLoader(
         val_set,
         batch_size=batch_size,
