@@ -24,7 +24,7 @@ from torch.utils.data import DataLoader
 from torchvision.transforms import transforms as T
 from torchvision.transforms._transforms_video import ToTensorVideo
 
-from tubevit.dataset import MyUCF101
+from tubevit.dataset import get_dataset
 from tubevit.model import TubeViTLightningModule
 from tubevit.gpu_monitor import GPUMonitorCallback
 from lightning.pytorch.callbacks import ModelCheckpoint
@@ -37,8 +37,9 @@ torch.set_float32_matmul_precision('medium')
 
 @click.command()
 @click.option("--config", type=click.Path(exists=True), default=None, help="Path to YAML configuration file. CLI arguments override config values.")
+@click.option("--dataset", "--dataset-name", type=str, default="ucf101", help="Dataset name: ucf101, kinetics400/k400, kinetics600/k600, kinetics700/k700")
 @click.option("-r", "--dataset-root", type=click.Path(exists=True), default=None, help="path to dataset.")
-@click.option("-a", "--annotation-path", type=click.Path(exists=True), default=None, help="path to dataset.")
+@click.option("-a", "--annotation-path", type=click.Path(exists=True), default=None, help="path to dataset annotations (required for UCF101, not used for Kinetics).")
 @click.option("-nc", "--num-classes", type=int, default=None, help="num of classes of dataset.")
 @click.option("-b", "--batch-size", type=int, default=None, help="batch size.")
 @click.option("-f", "--frames-per-clip", type=int, default=None, help="frame per clip.")
@@ -51,6 +52,7 @@ torch.set_float32_matmul_precision('medium')
 @click.option("--run-name", type=str, default=None, help="Name for this training run. If not provided, will be auto-generated.")
 def main(
     config,
+    dataset,
     dataset_root,
     annotation_path,
     num_classes,
@@ -73,6 +75,7 @@ def main(
     
     # Prepare CLI arguments dictionary
     cli_args = {
+        'dataset': dataset,
         'dataset_root': dataset_root,
         'annotation_path': annotation_path,
         'num_classes': num_classes,
@@ -91,9 +94,23 @@ def main(
     merged_config = merge_config_with_args(cfg, cli_args)
     
     # Extract values from merged config (support nested structure)
+    dataset_name = get_config_value(merged_config, 'dataset') or get_config_value(merged_config, 'dataset.name', 'ucf101')
     dataset_root = get_config_value(merged_config, 'dataset_root') or get_config_value(merged_config, 'dataset.root')
     annotation_path = get_config_value(merged_config, 'annotation_path') or get_config_value(merged_config, 'dataset.annotation_path')
-    num_classes = get_config_value(merged_config, 'num_classes') or get_config_value(merged_config, 'dataset.num_classes', 101)
+    
+    # Get num_classes with dataset-specific defaults
+    if dataset_name == 'ucf101':
+        default_num_classes = 101
+    elif '400' in dataset_name or 'k400' in dataset_name:
+        default_num_classes = 400
+    elif '600' in dataset_name or 'k600' in dataset_name:
+        default_num_classes = 600
+    elif '700' in dataset_name or 'k700' in dataset_name:
+        default_num_classes = 700
+    else:
+        default_num_classes = 101
+    
+    num_classes = get_config_value(merged_config, 'num_classes') or get_config_value(merged_config, 'dataset.num_classes', default_num_classes)
     batch_size = get_config_value(merged_config, 'batch_size') or get_config_value(merged_config, 'training.batch_size', 32)
     frames_per_clip = get_config_value(merged_config, 'frames_per_clip') or get_config_value(merged_config, 'training.frames_per_clip', 32)
     video_size = get_config_value(merged_config, 'video_size') or get_config_value(merged_config, 'training.video_size', (224, 224))
@@ -105,8 +122,10 @@ def main(
     # Validate required parameters
     if not dataset_root:
         raise ValueError("dataset_root is required. Provide via --dataset-root or config file (dataset.root)")
-    if not annotation_path:
-        raise ValueError("annotation_path is required. Provide via --annotation-path or config file (dataset.annotation_path)")
+    
+    # annotation_path is only required for UCF101
+    if dataset_name == 'ucf101' and not annotation_path:
+        raise ValueError("annotation_path is required for UCF101. Provide via --annotation-path or config file (dataset.annotation_path)")
     
     # Convert video_size tuple if it's a list from YAML
     if isinstance(video_size, list):
@@ -164,13 +183,19 @@ def main(
     print(f"\n{'='*60}")
     print("Loading Training Dataset")
     print(f"{'='*60}")
+    print(f"Dataset: {dataset_name}")
     print(f"Dataset root: {dataset_root}")
-    print(f"Annotation path: {annotation_path}")
+    if annotation_path:
+        print(f"Annotation path: {annotation_path}")
     print(f"Frames per clip: {frames_per_clip}")
     print(f"Video size: {video_size}")
     print(f"Batch size: {batch_size}")
     
-    train_metadata_file = get_config_value(merged_config, 'metadata.train_file', "ucf101-train-meta.pickle")
+    # Generate dataset-specific metadata filename
+    dataset_name_clean = dataset_name.lower().replace('-', '').replace('_', '')
+    default_train_metadata_file = f"{dataset_name_clean}-train-meta.pickle"
+    train_metadata_file = get_config_value(merged_config, 'metadata.train_file', default_train_metadata_file)
+    
     train_precomputed_metadata = None
     if os.path.exists(train_metadata_file):
         print(f"Loading precomputed metadata from {train_metadata_file}...")
@@ -181,15 +206,23 @@ def main(
         print(f"No precomputed metadata found. Will create {train_metadata_file} after loading dataset.")
 
     print("\nInitializing training dataset...")
-    train_set = MyUCF101(
-        root=dataset_root,
-        annotation_path=annotation_path,
-        _precomputed_metadata=train_precomputed_metadata,
-        frames_per_clip=frames_per_clip,
-        train=True,
-        output_format="THWC",
-        transform=train_transform,
-    )
+    # Prepare dataset kwargs
+    train_dataset_kwargs = {
+        'root': dataset_root,
+        'frames_per_clip': frames_per_clip,
+        'output_format': "THWC",
+        'transform': train_transform,
+        '_precomputed_metadata': train_precomputed_metadata,
+    }
+    
+    # Handle dataset-specific parameters
+    if dataset_name == 'ucf101':
+        train_dataset_kwargs['annotation_path'] = annotation_path
+        train_dataset_kwargs['train'] = True
+    elif dataset_name.startswith('kinetics') or dataset_name.startswith('k'):
+        train_dataset_kwargs['split'] = 'train'
+    
+    train_set = get_dataset(dataset_name=dataset_name, **train_dataset_kwargs)
     print(f"✓ Training dataset loaded: {len(train_set)} samples")
 
     if not os.path.exists(train_metadata_file):
@@ -201,7 +234,9 @@ def main(
     print(f"\n{'='*60}")
     print("Loading Validation Dataset")
     print(f"{'='*60}")
-    val_metadata_file = get_config_value(merged_config, 'metadata.val_file', "ucf101-val-meta.pickle")
+    default_val_metadata_file = f"{dataset_name_clean}-val-meta.pickle"
+    val_metadata_file = get_config_value(merged_config, 'metadata.val_file', default_val_metadata_file)
+    
     val_precomputed_metadata = None
     if os.path.exists(val_metadata_file):
         print(f"Loading precomputed metadata from {val_metadata_file}...")
@@ -212,15 +247,23 @@ def main(
         print(f"No precomputed metadata found. Will create {val_metadata_file} after loading dataset.")
 
     print("\nInitializing validation dataset...")
-    val_set = MyUCF101(
-        root=dataset_root,
-        annotation_path=annotation_path,
-        _precomputed_metadata=val_precomputed_metadata,
-        frames_per_clip=frames_per_clip,
-        train=False,
-        output_format="THWC",
-        transform=test_transform,
-    )
+    # Prepare dataset kwargs
+    val_dataset_kwargs = {
+        'root': dataset_root,
+        'frames_per_clip': frames_per_clip,
+        'output_format': "THWC",
+        'transform': test_transform,
+        '_precomputed_metadata': val_precomputed_metadata,
+    }
+    
+    # Handle dataset-specific parameters
+    if dataset_name == 'ucf101':
+        val_dataset_kwargs['annotation_path'] = annotation_path
+        val_dataset_kwargs['train'] = False
+    elif dataset_name.startswith('kinetics') or dataset_name.startswith('k'):
+        val_dataset_kwargs['split'] = 'val'
+    
+    val_set = get_dataset(dataset_name=dataset_name, **val_dataset_kwargs)
     print(f"✓ Validation dataset loaded: {len(val_set)} samples")
 
     if not os.path.exists(val_metadata_file):

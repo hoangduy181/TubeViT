@@ -20,7 +20,7 @@ from torchmetrics.functional import accuracy, auroc, confusion_matrix, f1_score,
 from torchvision.transforms import transforms as T
 from torchvision.transforms._transforms_video import ToTensorVideo
 
-from tubevit.dataset import MyUCF101
+from tubevit.dataset import get_dataset
 from tubevit.model import TubeViTLightningModule
 from utils.constant import IMAGENET_MEAN, IMAGENET_STD
 from utils.config_loader import load_config, merge_config_with_args, get_config_value
@@ -33,10 +33,11 @@ torch.set_float32_matmul_precision('medium')
 
 @click.command()
 @click.option("--config", type=click.Path(exists=True), default=None, help="Path to YAML configuration file. CLI arguments override config values.")
+@click.option("--dataset", "--dataset-name", type=str, default="ucf101", help="Dataset name: ucf101, kinetics400/k400, kinetics600/k600, kinetics700/k700")
 @click.option("-r", "--dataset-root", type=click.Path(exists=True), default=None, help="path to dataset.")
 @click.option("-m", "--model-path", type=click.Path(exists=True), default=None, help="path to model weight.")
-@click.option("-a", "--annotation-path", type=click.Path(exists=True), default=None, help="path to dataset.")
-@click.option("--label-path", type=click.Path(exists=True), default=None, help="path to classInd.txt.")
+@click.option("-a", "--annotation-path", type=click.Path(exists=True), default=None, help="path to dataset annotations (required for UCF101, not used for Kinetics).")
+@click.option("--label-path", type=click.Path(exists=True), default=None, help="path to class labels file (required for UCF101, optional for Kinetics).")
 @click.option("-nc", "--num-classes", type=int, default=None, help="num of classes of dataset.")
 @click.option("-b", "--batch-size", type=int, default=None, help="batch size.")
 @click.option("-f", "--frames-per-clip", type=int, default=None, help="frame per clip.")
@@ -48,6 +49,7 @@ torch.set_float32_matmul_precision('medium')
 @click.option("--single-clip-per-video", type=bool, is_flag=True, show_default=True, default=False, help="Use only 1 clip per video (faster but less robust). If False, aggregates predictions from multiple clips per video.")
 def main(
     config,
+    dataset,
     dataset_root,
     model_path,
     annotation_path,
@@ -71,6 +73,7 @@ def main(
     
     # Prepare CLI arguments dictionary
     cli_args = {
+        'dataset': dataset,
         'dataset_root': dataset_root,
         'model_path': model_path,
         'annotation_path': annotation_path,
@@ -90,11 +93,25 @@ def main(
     merged_config = merge_config_with_args(cfg, cli_args)
     
     # Extract values from merged config (support nested structure)
+    dataset_name = get_config_value(merged_config, 'dataset') or get_config_value(merged_config, 'dataset.name', 'ucf101')
     dataset_root = get_config_value(merged_config, 'dataset_root') or get_config_value(merged_config, 'dataset.root')
     model_path = get_config_value(merged_config, 'model_path')
     annotation_path = get_config_value(merged_config, 'annotation_path') or get_config_value(merged_config, 'dataset.annotation_path')
     label_path = get_config_value(merged_config, 'label_path') or get_config_value(merged_config, 'dataset.label_path')
-    num_classes = get_config_value(merged_config, 'num_classes') or get_config_value(merged_config, 'dataset.num_classes', 101)
+    
+    # Get num_classes with dataset-specific defaults
+    if dataset_name == 'ucf101':
+        default_num_classes = 101
+    elif '400' in dataset_name or 'k400' in dataset_name:
+        default_num_classes = 400
+    elif '600' in dataset_name or 'k600' in dataset_name:
+        default_num_classes = 600
+    elif '700' in dataset_name or 'k700' in dataset_name:
+        default_num_classes = 700
+    else:
+        default_num_classes = 101
+    
+    num_classes = get_config_value(merged_config, 'num_classes') or get_config_value(merged_config, 'dataset.num_classes', default_num_classes)
     batch_size = get_config_value(merged_config, 'batch_size') or get_config_value(merged_config, 'training.batch_size', 32)
     frames_per_clip = get_config_value(merged_config, 'frames_per_clip') or get_config_value(merged_config, 'training.frames_per_clip', 32)
     video_size = get_config_value(merged_config, 'video_size') or get_config_value(merged_config, 'training.video_size', (224, 224))
@@ -108,10 +125,14 @@ def main(
         raise ValueError("dataset_root is required. Provide via --dataset-root or config file (dataset.root)")
     if not model_path:
         raise ValueError("model_path is required. Provide via --model-path")
-    if not annotation_path:
-        raise ValueError("annotation_path is required. Provide via --annotation-path or config file (dataset.annotation_path)")
-    if not label_path:
-        raise ValueError("label_path is required. Provide via --label-path or config file (dataset.label_path)")
+    
+    # annotation_path is only required for UCF101
+    if dataset_name == 'ucf101' and not annotation_path:
+        raise ValueError("annotation_path is required for UCF101. Provide via --annotation-path or config file (dataset.annotation_path)")
+    
+    # label_path is optional for Kinetics (can extract from dataset), but recommended for UCF101
+    if dataset_name == 'ucf101' and not label_path:
+        raise ValueError("label_path is required for UCF101. Provide via --label-path or config file (dataset.label_path)")
     
     # Convert video_size tuple if it's a list from YAML
     if isinstance(video_size, list):
@@ -139,9 +160,17 @@ def main(
         num_workers = os.cpu_count() or 0
         print(f"Using {num_workers} DataLoader workers (auto-detected from CPU count)")
 
-    with open(label_path, "r") as f:
-        labels = f.read().splitlines()
-        labels = list(map(lambda x: x.split(" ")[-1], labels))
+    # Load labels - handle differently for each dataset
+    # For UCF101: Load from label_path before dataset init
+    # For Kinetics: Will extract from dataset instance after initialization
+    labels = None
+    if dataset_name == 'ucf101':
+        if label_path and os.path.exists(label_path):
+            with open(label_path, "r") as f:
+                labels = f.read().splitlines()
+                labels = list(map(lambda x: x.split(" ")[-1], labels))
+        else:
+            raise ValueError(f"label_path is required for UCF101: {label_path}")
 
     test_transform = T.Compose(
         [
@@ -151,21 +180,55 @@ def main(
         ]
     )
 
-    val_metadata_file = get_config_value(merged_config, 'metadata.val_file', "ucf101-val-meta.pickle")
+    # Generate dataset-specific metadata filename
+    dataset_name_clean = dataset_name.lower().replace('-', '').replace('_', '')
+    default_metadata_file = f"{dataset_name_clean}-val-meta.pickle"
+    val_metadata_file = get_config_value(merged_config, 'metadata.val_file', default_metadata_file)
+    
     val_precomputed_metadata = None
     if os.path.exists(val_metadata_file):
         with open(val_metadata_file, "rb") as f:
             val_precomputed_metadata = pickle.load(f)
 
-    val_set = MyUCF101(
-        root=dataset_root,
-        annotation_path=annotation_path,
-        _precomputed_metadata=val_precomputed_metadata,
-        frames_per_clip=frames_per_clip,
-        train=False,
-        output_format="THWC",
-        transform=test_transform,
-    )
+    # Prepare dataset kwargs
+    dataset_kwargs = {
+        'root': dataset_root,
+        'frames_per_clip': frames_per_clip,
+        'output_format': "THWC",
+        'transform': test_transform,
+        '_precomputed_metadata': val_precomputed_metadata,
+    }
+    
+    # Handle dataset-specific parameters
+    if dataset_name == 'ucf101':
+        dataset_kwargs['annotation_path'] = annotation_path
+        dataset_kwargs['train'] = False
+    elif dataset_name.startswith('kinetics') or dataset_name.startswith('k'):
+        # Kinetics uses split parameter, not train/annotation_path
+        dataset_kwargs['split'] = 'val'
+        # num_classes is handled by get_dataset based on dataset_name
+    
+    # Create dataset instance using factory
+    print(f"\n{'='*60}")
+    print(f"Initializing {dataset_name} dataset...")
+    print(f"{'='*60}")
+    val_set = get_dataset(dataset_name=dataset_name, **dataset_kwargs)
+    
+    # For Kinetics, extract labels from dataset if not loaded
+    if labels is None:
+        if hasattr(val_set, 'classes') and val_set.classes:
+            labels = val_set.classes
+            print(f"✓ Extracted {len(labels)} class labels from dataset")
+        elif label_path and os.path.exists(label_path):
+            # Fallback: load from file
+            with open(label_path, "r") as f:
+                labels = [line.strip() for line in f.readlines() if line.strip()]
+            print(f"✓ Loaded {len(labels)} class labels from file: {label_path}")
+        else:
+            raise ValueError(
+                f"Cannot determine labels for {dataset_name}. "
+                f"Either provide --label-path or ensure dataset has classes attribute."
+            )
 
     if not os.path.exists(val_metadata_file):
         with open(val_metadata_file, "wb") as f:

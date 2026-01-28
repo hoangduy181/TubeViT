@@ -1,13 +1,14 @@
-# TubeViT Configuration File for UCF101 Dataset
+# TubeViT Configuration File for Kinetics-700 Dataset
 # This file contains common configuration parameters for training and evaluation
 
 # Dataset Configuration
 dataset:
-  name: "ucf101"  # Dataset identifier
-  root: "/path/to/ucf101"  # Path to UCF101 dataset root directory
-  annotation_path: "/path/to/annotations"  # Path to annotation directory (containing trainlist01.txt, testlist01.txt, classInd.txt)
-  label_path: "/path/to/annotations/classInd.txt"  # Path to classInd.txt file
-  num_classes: 101  # Number of classes in UCF101
+  name: "kinetics700"  # Dataset identifier
+  root: "/path/to/kinetics700"  # Path to Kinetics-700 dataset root directory
+  # annotation_path: NOT USED for Kinetics (directory structure is the annotation)
+  # label_path: Optional - if not provided, labels will be extracted from dataset
+  #   If provided, should be a text file with one class name per line
+  num_classes: 700  # Number of classes in Kinetics-700
 
 # Model Configuration
 model:
@@ -44,5 +45,21 @@ paths:
 
 # Metadata files (will be auto-generated if not exists)
 metadata:
-  train_file: "ucf101-train-meta.pickle"
-  val_file: "ucf101-val-meta.pickle"
+  train_file: "kinetics700-train-meta.pickle"
+  val_file: "kinetics700-val-meta.pickle"
+
+# Note: Kinetics dataset structure should be:
+# root/
+#   train/
+#     class1/
+#       video1.mp4
+#       video2.mp4
+#       ...
+#     class2/
+#       ...
+#   val/
+#     class1/
+#       video1.mp4
+#       ...
+#     class2/
+#       ...
