@@ -183,8 +183,8 @@ def main(
     print(f"  Average clips per video: {actual_dataset_size / len(val_set.samples):.2f}")
     
     # Use RandomSampler to sample a subset of the dataset
-    num_samples = len(val_set) // 5000
-    print(f"  Using RandomSampler with {num_samples} samples (1/{5000} of dataset)")
+    num_samples = len(val_set) // 500
+    print(f"  Using RandomSampler with {num_samples} samples (1/{500} of dataset)")
     val_sampler = RandomSampler(val_set, num_samples=num_samples)
     
     val_dataloader = DataLoader(
