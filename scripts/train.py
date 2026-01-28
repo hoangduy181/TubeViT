@@ -40,6 +40,7 @@ torch.set_float32_matmul_precision('medium')
 @click.option("--fast-dev-run", type=bool, is_flag=True, show_default=True, default=False)
 @click.option("--seed", type=int, default=42, help="random seed.")
 @click.option("--preview-video", type=bool, is_flag=True, show_default=True, default=False, help="Show input video")
+@click.option("-m", "--model-path", type=click.Path(exists=True), default=None, help="Path to checkpoint to continue training from.")
 def main(
     dataset_root,
     annotation_path,
@@ -52,6 +53,7 @@ def main(
     fast_dev_run,
     seed,
     preview_video,
+    model_path,
 ):
     pl.seed_everything(seed)
 
@@ -191,24 +193,46 @@ def main(
         plt.tight_layout()
         plt.show()
 
-    model = TubeViTLightningModule(
-        num_classes=num_classes,
-        video_shape=x.shape[1:],
-        num_layers=12,
-        num_heads=12,
-        hidden_dim=768,
-        mlp_dim=3072,
-        lr=1e-4,
-        weight_decay=0.001,
-        weight_path="tubevit_b_(a+iv)+(d+v)+(e+iv)+(f+v).pt",
-        max_epochs=max_epochs,
-        # Additional training parameters to save in hparams.yaml
-        batch_size=batch_size,
-        frames_per_clip=frames_per_clip,
-        video_size=video_size,
-        num_workers=num_workers,
-        seed=seed,
-    )
+    # Load model from checkpoint or create new model
+    if model_path:
+        print(f"\n{'='*60}")
+        print(f"Loading model from checkpoint: {model_path}")
+        print(f"{'='*60}")
+        model = TubeViTLightningModule.load_from_checkpoint(
+            model_path,
+            # Override hyperparameters if needed
+            max_epochs=max_epochs,
+            batch_size=batch_size,
+            frames_per_clip=frames_per_clip,
+            video_size=video_size,
+            num_workers=num_workers,
+            seed=seed,
+        )
+        print(f"✓ Model loaded from checkpoint")
+        print(f"  Continuing training from epoch {model.current_epoch + 1 if hasattr(model, 'current_epoch') else 'unknown'}")
+    else:
+        print(f"\n{'='*60}")
+        print("Creating new model")
+        print(f"{'='*60}")
+        model = TubeViTLightningModule(
+            num_classes=num_classes,
+            video_shape=x.shape[1:],
+            num_layers=12,
+            num_heads=12,
+            hidden_dim=768,
+            mlp_dim=3072,
+            lr=1e-4,
+            weight_decay=0.001,
+            weight_path="tubevit_b_(a+iv)+(d+v)+(e+iv)+(f+v).pt",
+            max_epochs=max_epochs,
+            # Additional training parameters to save in hparams.yaml
+            batch_size=batch_size,
+            frames_per_clip=frames_per_clip,
+            video_size=video_size,
+            num_workers=num_workers,
+            seed=seed,
+        )
+        print(f"✓ New model created")
 
     # Setup callbacks
     callbacks = [
