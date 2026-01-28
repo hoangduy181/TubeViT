@@ -179,12 +179,12 @@ def main(
     print(f"Dataset info:")
     print(f"  Total clips in validation set: {actual_dataset_size}")
     print(f"  Total videos in validation set: {len(val_set.samples)}")
-    print(f"  val_set.indices: {val_set.indices}")
+    # print(f"  val_set.indices: {val_set.indices}") # video index
     print(f"  Average clips per video: {actual_dataset_size / len(val_set.samples):.2f}")
     
     # Use RandomSampler to sample a subset of the dataset
-    num_samples = len(val_set) // 500
-    print(f"  Using RandomSampler with {num_samples} samples (1/{500} of dataset)")
+    num_samples = len(val_set) // 50
+    print(f"  Using RandomSampler with {num_samples} samples (1/50 of dataset)")
     val_sampler = RandomSampler(val_set, num_samples=num_samples)
     
     val_dataloader = DataLoader(
