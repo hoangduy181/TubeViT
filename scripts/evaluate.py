@@ -244,121 +244,12 @@ def main(
     predictions = trainer.predict(model, dataloaders=val_dataloader)
     end_time = time.time()
     
-    # Collect all clip-level predictions
-    y_clips = torch.cat([item["y"] for item in predictions])
-    y_pred_clips = torch.cat([item["y_pred"] for item in predictions])
-    y_prob_clips = torch.cat([item["y_prob"] for item in predictions])
+    # Use predictions directly
+    y = torch.cat([item["y"] for item in predictions])
+    y_pred = torch.cat([item["y_pred"] for item in predictions])
+    y_prob = torch.cat([item["y_prob"] for item in predictions])
     
-    # Note: y_clips from predictions may be incorrect when using Subset
-    # We will use dataset labels directly instead of prediction labels
-    
-    # Calculate performance metrics (clip-level)
-    total_time = end_time - start_time
-    total_frames = len(y_clips) * frames_per_clip  # Total frames processed
-    fps = total_frames / total_time if total_time > 0 else 0
-    samples_per_sec = len(y_clips) / total_time if total_time > 0 else 0
-    
-    print(f"\n{'='*60}")
-    print("Performance Metrics (Clip-level)")
-    print(f"{'='*60}")
-    print(f"Total inference time: {total_time:.2f} seconds")
-    print(f"Total clips processed: {len(y_clips)}")
-    print(f"Total frames processed: {total_frames}")
-    print(f"FPS (frames per second): {fps:.2f}")
-    print(f"Clips per second: {samples_per_sec:.2f}")
-    print(f"Time per clip: {total_time / len(y_clips) * 1000:.2f} ms" if len(y_clips) > 0 else "N/A")
-    
-    actual_num_clips = len(y_clips)
-    
-    # Aggregate predictions per video
-    print(f"\n{'='*60}")
-    print("Aggregating predictions per video...")
-    print(f"{'='*60}")
-    
-    # Group clips by video index
-    # IMPORTANT: With RandomSampler, we need to track which clip indices were sampled
-    # We'll iterate through the sampler to get the actual clip indices
-    video_to_clips = {}  # video_idx -> list of (clip_idx, y, y_prob)
-    video_paths_map = {}  # video_idx -> video_path
-    
-    print(f"Processing {actual_num_clips} clips...")
-    
-    # Get the actual clip indices that were sampled by RandomSampler
-    # The sampler's __iter__ returns indices in random order
-    sampled_clip_indices = list(val_sampler)
-    
-    for pred_idx in range(actual_num_clips):
-        try:
-            # Get the actual clip index that was sampled
-            clip_idx = sampled_clip_indices[pred_idx] if pred_idx < len(sampled_clip_indices) else pred_idx
-            
-            # Get video_idx from VideoClips (same as __getitem__ does internally)
-            _, _, _, video_idx = val_set.video_clips.get_clip(clip_idx)
-            
-            # Map video_idx to sample_idx using self.indices (same as __getitem__ does)
-            sample_idx = val_set.indices[video_idx]
-            
-            # Safety check: ensure sample_idx is within bounds
-            if sample_idx >= len(val_set.samples):
-                print(f"Warning: sample_idx {sample_idx} >= len(val_set.samples) {len(val_set.samples)}")
-                continue
-            
-            # Store video path and label (same for all clips from this video)
-            if video_idx not in video_paths_map:
-                video_path, label = val_set.samples[sample_idx]
-                # Convert to absolute path if relative
-                if not os.path.isabs(video_path):
-                    video_path = os.path.join(val_set.root, video_path)
-                video_paths_map[video_idx] = video_path
-            
-            # Group clip predictions by video
-            if video_idx not in video_to_clips:
-                video_to_clips[video_idx] = []
-            video_to_clips[video_idx].append({
-                'clip_idx': clip_idx,
-                'y': y_clips[pred_idx],  # Use pred_idx to index predictions
-                'y_prob': y_prob_clips[pred_idx],  # Use pred_idx to index predictions
-            })
-            
-        except (IndexError, KeyError, AttributeError) as e:
-            print(f"Warning: Could not process clip {pred_idx}: {e}")
-            continue
-    
-    # Aggregate predictions per video (average probabilities)
-    print(f"Aggregating {len(video_to_clips)} videos from {actual_num_clips} clips...")
-    
-    video_indices = sorted(video_to_clips.keys())
-    y_videos = []
-    y_prob_videos = []
-    
-    for video_idx in video_indices:
-            clips_data = video_to_clips[video_idx]
-            
-            # Average probabilities across all clips from this video
-            prob_tensors = [clip['y_prob'] for clip in clips_data]
-            avg_prob = torch.stack(prob_tensors).mean(dim=0)
-            
-            # Get ground truth label from dataset
-            try:
-                sample_idx = val_set.indices[video_idx]
-                if sample_idx < len(val_set.samples):
-                    _, dataset_label = val_set.samples[sample_idx]
-                    y_videos.append(torch.tensor(dataset_label))
-                else:
-                    y_videos.append(clips_data[0]['y'])
-            except (IndexError, KeyError):
-                y_videos.append(clips_data[0]['y'])
-            
-            y_prob_videos.append(avg_prob)
-        
-    # Convert to tensors
-    y = torch.stack(y_videos)
-    y_prob = torch.stack(y_prob_videos)
-    y_pred = torch.argmax(y_prob, dim=1)
-    
-    print(f"✓ Aggregated to {len(y)} video-level predictions")
-    
-    # Calculate metrics
+    # Calculate metrics directly from predictions
     print(f"\n{'='*60}")
     print(f"Calculating Metrics...")
     print(f"{'='*60}")
@@ -399,8 +290,7 @@ def main(
         f.write(f"\n{'='*60}\n")
         f.write("Overall Metrics\n")
         f.write(f"{'='*60}\n")
-        f.write(f"Total videos evaluated: {len(y)}\n")
-        f.write(f"Total clips processed: {actual_num_clips}\n")
+        f.write(f"Total samples evaluated: {len(y)}\n")
         f.write(f"Number of classes: {num_classes}\n")
         f.write(f"\nAccuracy: {acc:.4f} ({acc*100:.2f}%)\n")
         f.write(f"\nPrecision:\n")

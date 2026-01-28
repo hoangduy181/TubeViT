@@ -12,5 +12,5 @@ av  # PyAV - required for torchvision video operations
 pyyaml~=6.0.1  # For configuration file support
 
 # Optional: For FLOPS calculation (install one of these)
-# fvcore>=0.1.5  # Facebook's fvcore for FLOPS calculation
-thop>=0.1.1  # Alternative FLOPS calculation library
+fvcore>=0.1.5  # Facebook's fvcore for FLOPS calculation
+# thop>=0.1.1  # Alternative FLOPS calculation library
