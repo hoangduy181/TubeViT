@@ -276,6 +276,12 @@ class TubeViT(nn.Module):
         self.video_shape = np.array(video_shape)  # (C, T, H, W)
         self.num_classes = num_classes
         self.hidden_dim = hidden_dim #(768) as ViT
+        
+        # Store space-to-depth parameters for positional embedding calculation
+        self.depth_to_space_factor = depth_to_space_factor
+        self.apply_on = apply_on
+        self.apply_temporal = apply_on in ["temporal", "both"]
+        self.apply_spatial = apply_on in ["spatial", "both"]
 
         # according to the paper, we have 4 type of tubes
         self.kernel_sizes = ( # kT, kH, kW
@@ -357,28 +363,142 @@ class TubeViT(nn.Module):
         return x
 
     def _calc_conv_shape(self, kernel_size, stride, offset) -> np.ndarray:
+        """
+        Calculate output shape after conv3d, accounting for space-to-depth grouping.
+        
+        With space-to-depth:
+        - We use modified stride (reduced by factor k)
+        - This creates more tokens initially
+        - Then we group k tokens, so final shape matches original stride calculation
+        - But we need to account for the grouping in positional embedding
+        
+        Returns:
+            Final token shape after grouping: (nT, nH, nW)
+        """
         kernel_size = np.array(kernel_size)
         stride = np.array(stride)
         offset = np.array(offset)
-        output = np.floor(
-            ((self.video_shape[[1, 2, 3]] - offset - kernel_size) / stride) + 1
-        ).astype(int) #THW
-        return output # (nT, nH, nW) number of tokens in each dimension
+        
+        if self.depth_to_space_factor > 1:
+            # Calculate shape with modified stride (reduced by factor k)
+            modified_stride = np.array([
+                max(1, stride[0] // self.depth_to_space_factor) if self.apply_temporal else stride[0],
+                max(1, stride[1] // self.depth_to_space_factor) if self.apply_spatial else stride[1],
+                max(1, stride[2] // self.depth_to_space_factor) if self.apply_spatial else stride[2],
+            ])
+            
+            # Shape after conv3d with modified stride
+            shape_after_conv = np.floor(
+                ((self.video_shape[[1, 2, 3]] - offset - kernel_size) / modified_stride) + 1
+            ).astype(int)
+            
+            # After grouping k tokens, the final shape depends on apply_on
+            k = self.depth_to_space_factor
+            if self.apply_on == "temporal":
+                # Group k tokens along temporal -> divide T by k
+                # H and W remain unchanged
+                final_shape = np.array([
+                    shape_after_conv[0] // k,
+                    shape_after_conv[1],
+                    shape_after_conv[2],
+                ])
+            elif self.apply_on == "spatial":
+                # Group k tokens along spatial (H) -> divide H by k
+                # T and W remain unchanged
+                final_shape = np.array([
+                    shape_after_conv[0],
+                    shape_after_conv[1] // k,
+                    shape_after_conv[2],
+                ])
+            else:  # both
+                # Group k tokens along temporal -> divide T by k
+                # H and W remain increased (not grouped, so they stay at shape_after_conv)
+                # This provides better spatial coverage
+                final_shape = np.array([
+                    shape_after_conv[0] // k,
+                    shape_after_conv[1],  # Increased by k, not grouped
+                    shape_after_conv[2],  # Increased by k, not grouped
+                ])
+            
+            return final_shape
+        else:
+            # Original behavior: no space-to-depth
+            output = np.floor(
+                ((self.video_shape[[1, 2, 3]] - offset - kernel_size) / stride) + 1
+            ).astype(int) #THW
+            return output # (nT, nH, nW) number of tokens in each dimension
 
     def _generate_position_embedding(self) -> torch.nn.Parameter:
+        """
+        Generate positional embeddings accounting for space-to-depth grouping.
+        
+        The positional embeddings need to match the final token positions after grouping.
+        We use the final tube_shape (after grouping) but need to adjust the stride
+        information passed to get_3d_sincos_pos_embed to reflect the effective stride
+        after grouping.
+        """
         position_embedding = [torch.zeros(1, self.hidden_dim)] # (1, hidden_dim)
 
         for i in range(len(self.kernel_sizes)): # loop on different tube types
+            # Calculate final tube shape after grouping
             tube_shape = self._calc_conv_shape(
                 self.kernel_sizes[i], 
-                self.strides[i], 
+                self.strides[i],
                 self.offsets[i]
             )
+            
+            # For positional embedding with space-to-depth:
+            # - We group k tokens, so final tube_shape is reduced (divided by k along grouped axis)
+            # - After grouping along an axis, we keep every k-th token, so spacing = original stride
+            # - For axes that are NOT grouped but have reduced stride, spacing = modified stride
+            #
+            # Example with temporal grouping (k=2):
+            # - Modified stride: s/2, tokens at: 0, s/2, s, 3s/2, 2s, ...
+            # - After grouping: keep tokens at 0, s, 2s, ... (every k-th)
+            # - Final spacing along T: s (original stride)
+            #
+            # Example with "both" (k=2):
+            # - Modified stride: (s_t/2, s_h/2, s_w/2)
+            # - After grouping along T: keep every 2nd token along T
+            # - Final spacing: (s_t, s_h/2, s_w/2) - T uses original, H/W use modified
+            
+            if self.depth_to_space_factor > 1:
+                # Calculate effective stride for positional embedding
+                # For grouped axes: use original stride (spacing after grouping)
+                # For non-grouped axes with reduced stride: use modified stride
+                k = self.depth_to_space_factor
+                effective_stride = []
+                for axis_idx, (orig_s, apply_reduction) in enumerate([
+                    (self.strides[i][0], self.apply_temporal),
+                    (self.strides[i][1], self.apply_spatial),
+                    (self.strides[i][2], self.apply_spatial),
+                ]):
+                    if self.apply_on == "temporal" and axis_idx == 0:
+                        # Temporal axis: grouped, so use original stride
+                        effective_stride.append(orig_s)
+                    elif self.apply_on == "spatial" and axis_idx > 0:
+                        # Spatial axis: grouped, so use original stride
+                        effective_stride.append(orig_s)
+                    elif self.apply_on == "both":
+                        if axis_idx == 0:
+                            # Temporal: grouped, use original stride
+                            effective_stride.append(orig_s)
+                        else:
+                            # Spatial: not grouped but stride reduced, use modified stride
+                            effective_stride.append(max(1, orig_s // k))
+                    else:
+                        # No reduction on this axis
+                        effective_stride.append(orig_s)
+                
+                effective_stride = tuple(effective_stride)
+            else:
+                effective_stride = self.strides[i]
+            
             pos_embed = get_3d_sincos_pos_embed(
                 embed_dim=self.hidden_dim,
-                tube_shape=tube_shape,
+                tube_shape=tuple(tube_shape),  # Final shape after grouping
                 kernel_size=self.kernel_sizes[i],
-                stride=self.strides[i],
+                stride=effective_stride,  # Effective stride after grouping
                 offset=self.offsets[i],
             ) # Returns (num_tokens_i, hidden_dim)
             position_embedding.append(pos_embed)
