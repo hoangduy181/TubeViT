@@ -9,7 +9,7 @@ in "[Rethinking Video ViTs: Sparse Video Tubes for Joint Image and Video Learnin
 - [ ] Sparse Tube Construction
     - [x] Multi-Tube
     - [x] Interpolated Kernels
-    - [ ] Space To Depth
+    - [x] Space To Depth
     - [ ] config of tubes
 - [ ] pipeline
     - [x] training
@@ -28,7 +28,10 @@ This project is based on `torch~=2.10.0` and [pytorch-lightning](https://github.
     pip install -r requirements.txt
     ```
 
-2. Download UFC101 dataset
+2. Download dataset
+
+    - **UCF101**: Download and prepare UCF101 dataset
+    - **Kinetics-400/600/700**: Download and prepare Kinetics dataset
 
 ## Convert ViT pre-trained weight
 
@@ -59,23 +62,42 @@ python scripts/convert_vit_weight.py
 
 Instead of providing all parameters via command-line, you can use YAML configuration files:
 
+**Available config files:**
+- `configs/ucf101.yaml` - UCF101 dataset configuration
+- `configs/kinetics400.yaml` - Kinetics-400 dataset configuration
+- `configs/kinetics600.yaml` - Kinetics-600 dataset configuration
+- `configs/kinetics700.yaml` - Kinetics-700 dataset configuration
+
 ```bash
 # Training with config file
 python scripts/train.py --config configs/ucf101.yaml
+python scripts/train.py --config configs/kinetics400.yaml
 
 # Evaluation with config file  
 python scripts/evaluate.py --config configs/ucf101.yaml --model-path models/my_model.ckpt
+python scripts/evaluate.py --config configs/kinetics400.yaml --model-path models/my_model.ckpt
 ```
 
 CLI arguments override config file values. See `configs/README.md` for more details.
 
 ## Train
 
-Current `train.py` only train on pytorch UCF101 dataset.
-Change the dataset if needed.
+`train.py` supports multiple datasets: **UCF101** and **Kinetics-400/600/700**.
 
-`--dataset-root` and `--annotation-path` is based
-on [torchvision.datasets.UCF101](https://pytorch.org/vision/main/generated/torchvision.datasets.UCF101.html)
+### Dataset Requirements
+
+**UCF101:**
+- `--dataset-root`: Path to UCF101 dataset root directory
+- `--annotation-path`: Path to annotation directory (containing `trainlist01.txt`, `testlist01.txt`)
+- `--label-path`: Path to `classInd.txt` file
+- Based on [torchvision.datasets.UCF101](https://pytorch.org/vision/main/generated/torchvision.datasets.UCF101.html)
+
+**Kinetics-400/600/700:**
+- `--dataset-root`: Path to Kinetics dataset root directory
+  - Directory structure: `root/train/class_name/video.mp4` and `root/val/class_name/video.mp4`
+- `--annotation-path`: **Not required** for Kinetics (directory structure is the annotation)
+- `--label-path`: Optional (labels are extracted from dataset structure if not provided)
+- Based on [torchvision.datasets.Kinetics](https://pytorch.org/vision/main/generated/torchvision.datasets.Kinetics.html)
 
 ```commandline
 python scripts/train.py --help
@@ -83,8 +105,9 @@ python scripts/train.py --help
 Usage: train.py [OPTIONS]
 
 Options:
+  --dataset, --dataset-name TEXT  Dataset name: ucf101, kinetics400/k400, kinetics600/k600, kinetics700/k700
   -r, --dataset-root PATH         path to dataset.  [required]
-  -a, --annotation-path PATH      path to dataset.  [required]
+  -a, --annotation-path PATH      path to dataset annotations (required for UCF101, not used for Kinetics).
   -nc, --num-classes INTEGER      num of classes of dataset.
   -b, --batch-size INTEGER        batch size.
   -f, --frames-per-clip INTEGER   frame per clip.
@@ -100,15 +123,44 @@ Options:
 
 ### Examples
 
+**UCF101:**
 ```commandline
 # Using config file (recommended)
 python scripts/train.py --config configs/ucf101.yaml
 
 # Using command-line arguments
-python scripts/train.py -r path/to/dataset -a path/to/annotation
+python scripts/train.py --dataset ucf101 -r path/to/ucf101 -a path/to/annotations
 
 # Mix: config file + override some parameters
 python scripts/train.py --config configs/ucf101.yaml --batch-size 64 --max-epochs 20
+```
+
+**Kinetics-400:**
+```commandline
+# Using config file (recommended)
+python scripts/train.py --config configs/kinetics400.yaml
+
+# Using command-line arguments
+python scripts/train.py --dataset kinetics400 -r /path/to/kinetics400 -nc 400
+
+# Short form dataset name
+python scripts/train.py --dataset k400 -r /path/to/kinetics400 -nc 400 -b 32 -f 32
+
+# Mix: config file + override parameters
+python scripts/train.py --config configs/kinetics400.yaml --batch-size 64 --max-epochs 20
+```
+
+**Kinetics-600/700:**
+```commandline
+# Kinetics-600
+python scripts/train.py --config configs/kinetics600.yaml
+# or
+python scripts/train.py --dataset k600 -r /path/to/kinetics600 -nc 600
+
+# Kinetics-700
+python scripts/train.py --config configs/kinetics700.yaml
+# or
+python scripts/train.py --dataset k700 -r /path/to/kinetics700 -nc 700
 ```
 
 **Note:** By default, `--num-workers` automatically uses all available CPUs for optimal data loading performance. You can override this by specifying `--num-workers <number>` if needed.
@@ -121,10 +173,11 @@ python scripts/evaluate.py --help
 Usage: evaluate.py [OPTIONS]
 
 Options:
+  --dataset, --dataset-name TEXT  Dataset name: ucf101, kinetics400/k400, kinetics600/k600, kinetics700/k700
   -r, --dataset-root PATH         path to dataset.  [required]
   -m, --model-path PATH           path to model weight.  [required]
-  -a, --annotation-path PATH      path to dataset.  [required]
-  --label-path PATH               path to classInd.txt.  [required]
+  -a, --annotation-path PATH      path to dataset annotations (required for UCF101, not used for Kinetics).
+  --label-path PATH               path to class labels file (required for UCF101, optional for Kinetics).
   -nc, --num-classes INTEGER      num of classes of dataset.
   -b, --batch-size INTEGER        batch size.
   -f, --frames-per-clip INTEGER   frame per clip.
@@ -140,18 +193,50 @@ Options:
 
 ### Examples
 
+**UCF101:**
 ```commandline
 # Using config file (recommended)
 python scripts/evaluate.py --config configs/ucf101.yaml --model-path path/to/model.ckpt
 
 # Using command-line arguments
-python scripts/evaluate.py -r path/to/dataset -a path/to/annotation -m path/to/model.ckpt --label-path path/to/classInd.txt
+python scripts/evaluate.py --dataset ucf101 -r path/to/dataset -a path/to/annotation -m path/to/model.ckpt --label-path path/to/classInd.txt
 
 # Single clip per video (faster evaluation)
 python scripts/evaluate.py --config configs/ucf101.yaml --model-path path/to/model.ckpt --single-clip-per-video
 
 # Multiple clips per video with custom run name (default, more robust)
 python scripts/evaluate.py --config configs/ucf101.yaml --model-path path/to/model.ckpt --run-name my_evaluation_run
+```
+
+**Kinetics-400:**
+```commandline
+# Using config file (recommended)
+python scripts/evaluate.py --config configs/kinetics400.yaml --model-path path/to/model.ckpt
+
+# Using command-line arguments (no annotation-path needed for Kinetics)
+python scripts/evaluate.py --dataset kinetics400 -r /path/to/kinetics400 -m path/to/model.ckpt -nc 400
+
+# Short form dataset name
+python scripts/evaluate.py --dataset k400 -r /path/to/kinetics400 -m path/to/model.ckpt -nc 400 -b 32
+
+# With optional label file (if you have one)
+python scripts/evaluate.py --dataset k400 -r /path/to/kinetics400 -m path/to/model.ckpt --label-path /path/to/class_list.txt -nc 400
+
+# Single clip per video (faster)
+python scripts/evaluate.py --config configs/kinetics400.yaml --model-path path/to/model.ckpt --single-clip-per-video
+```
+
+**Kinetics-600/700:**
+```commandline
+# Kinetics-600
+python scripts/evaluate.py --config configs/kinetics600.yaml --model-path path/to/model.ckpt
+# or
+python scripts/evaluate.py --dataset k600 -r /path/to/kinetics600 -m path/to/model.ckpt -nc 600
+
+# Kinetics-700
+python scripts/evaluate.py --config configs/kinetics700.yaml --model-path path/to/model.ckpt
+# or
+python scripts/evaluate.py --dataset k700 -r /path/to/kinetics700 -m path/to/model.ckpt -nc 700
 ```
 
 **Note:** By default, `--num-workers` automatically uses all available CPUs for optimal data loading performance. You can override this by specifying `--num-workers <number>` if needed.
