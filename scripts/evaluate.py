@@ -108,7 +108,7 @@ def main(
         with open(val_metadata_file, "wb") as f:
             pickle.dump(val_set.metadata, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-    # val_sampler = RandomSampler(val_set, num_samples=len(val_set) // 5000)
+    # val_sampler = RandomSampler(val_set, num_samples=len(val_set) // 50)
     val_sampler = SequentialSampler(val_set)
     val_dataloader = DataLoader(
         val_set,

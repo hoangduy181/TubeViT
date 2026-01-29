@@ -147,6 +147,9 @@ data/
 # customs
 *.tmp.ipynb
 
+# ignore results
+results/
+output.png
 
 # ignore models
 models/
