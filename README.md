@@ -33,6 +33,85 @@ This project is based on `torch~=2.10.0` and [pytorch-lightning](https://github.
     - **UCF101**: Download and prepare UCF101 dataset
     - **Kinetics-400/600/700**: Download and prepare Kinetics dataset
 
+## Dataset Preparation
+
+### Handling Corrupted Videos
+
+Kinetics datasets sometimes contain corrupted video files (missing moov atoms, incomplete downloads, etc.). The code includes automatic error handling to skip corrupted videos during data loading.
+
+**If you encounter errors with corrupted videos:**
+
+1. **Check for corrupted videos:**
+   ```bash
+   python scripts/check_corrupted_videos.py \
+       --root /path/to/kinetics400 \
+       --split train \
+       --output corrupted_videos.txt
+   ```
+
+2. **Remove corrupted videos (optional):**
+   ```bash
+   python scripts/check_corrupted_videos.py \
+       --root /path/to/kinetics400 \
+       --split train \
+       --remove
+   ```
+
+3. **PyAV Compatibility Issue:**
+   If you see `AttributeError: module 'av' has no attribute 'AVError'`, this is a PyAV version compatibility issue. The code includes an automatic patch, but if issues persist:
+   ```bash
+   # Option 1: Downgrade PyAV
+   pip install 'av<10.0.0'
+   
+   # Option 2: Upgrade torchvision
+   pip install --upgrade torchvision
+   ```
+
+### Reorganizing Kinetics Dataset (Flat Structure)
+
+If your Kinetics dataset has videos in flat folders (`train/`, `val/`, `test/`) instead of class-based folders, use the reorganization script:
+
+```bash
+python scripts/reorganize_kinetics_flat.py \
+    --root /path/to/kinetics400 \
+    --annotation-train /path/to/train.csv \
+    --annotation-val /path/to/val.csv \
+    [--use-symlinks]  # Optional: use symlinks instead of copying (saves disk space)
+```
+
+**CSV Format:**
+```csv
+video_id,class_name,start_time,end_time
+Ui0nGr0E3ow,abseiling,304,314
+ePgkF2BrL20,archery,2264,2274
+```
+
+Or simpler format:
+```csv
+video_id,class_name
+Ui0nGr0E3ow,abseiling
+ePgkF2BrL20,archery
+```
+
+The script will:
+1. Read CSV annotations to map video IDs to classes
+2. Create class folders (`train/class_name/`, `val/class_name/`)
+3. Move or symlink videos to the correct class folders
+
+After reorganization, your dataset will have the structure:
+```
+root/
+  train/
+    abseiling/
+      Ui0nGr0E3ow_000304_000314.mp4
+      ...
+    archery/
+      ...
+  val/
+    abseiling/
+      ...
+```
+
 ## Convert ViT pre-trained weight
 
 Use `convert_vit_weight.py` to convert torch ViT pre-trained weight to TubeVit.

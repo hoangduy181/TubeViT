@@ -8,6 +8,34 @@ from torchvision.datasets import UCF101, Kinetics
 # Suppress pts_unit warning from torchvision video reading
 warnings.filterwarnings('ignore', message=".*pts_unit.*", category=UserWarning)
 
+# Fix PyAV compatibility issue: patch torchvision's video reading
+# Newer PyAV versions use av.error.Error instead of av.AVError
+try:
+    from torchvision import io
+    import av.error
+    
+    # Store original function
+    _original_read_video_timestamps = io.read_video_timestamps
+    
+    def _patched_read_video_timestamps(filename, start_pts=0, end_pts=None, pts_unit='pts'):
+        """Patched version that handles PyAV compatibility."""
+        try:
+            return _original_read_video_timestamps(filename, start_pts, end_pts, pts_unit)
+        except AttributeError as e:
+            # Handle case where av.AVError doesn't exist
+            if "'av' has no attribute 'AVError'" in str(e) or "module 'av' has no attribute 'AVError'" in str(e):
+                # The actual error was likely an InvalidDataError
+                # Re-raise as RuntimeError so it can be caught by our error handling
+                raise RuntimeError(f"Invalid video data in {filename}: moov atom not found or corrupted")
+            raise
+    
+    # Apply patch
+    io.read_video_timestamps = _patched_read_video_timestamps
+except Exception:
+    # If patching fails, continue without patch
+    # Error handling in __getitem__ will catch corrupted videos
+    pass
+
 
 class MyUCF101(UCF101):
     def __init__(self, transform: Optional[Callable] = None, *args, **kwargs) -> None:
@@ -88,13 +116,57 @@ class MyUCF101(UCF101):
         self.transform = transform
 
     def __getitem__(self, idx: int) -> Tuple[Tensor, int]:
-        video, audio, info, video_idx = self.video_clips.get_clip(idx)
-        label = self.samples[self.indices[video_idx]][1]
-
-        if self.transform is not None:
-            video = self.transform(video)
-
-        return video, label
+        """
+        Get video clip with error handling for corrupted videos.
+        
+        If a video is corrupted, tries to get the next valid video.
+        This handles cases where videos have missing moov atoms or other corruption issues.
+        """
+        max_retries = 10  # Maximum number of retries to find a valid video
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                video, audio, info, video_idx = self.video_clips.get_clip(idx)
+                label = self.samples[self.indices[video_idx]][1]
+                
+                # Check if video is valid (has frames)
+                if video is None or video.numel() == 0:
+                    raise ValueError(f"Empty video at index {idx}")
+                
+                if self.transform is not None:
+                    video = self.transform(video)
+                
+                return video, label
+                
+            except Exception as e:
+                # Handle various video reading errors
+                error_msg = str(e).lower()
+                if any(keyword in error_msg for keyword in [
+                    'moov atom not found',
+                    'invalid data',
+                    'av.error',
+                    'attributeerror',
+                    'corrupted',
+                    'invalid file',
+                ]):
+                    # Corrupted video - try next index
+                    retry_count += 1
+                    idx = (idx + 1) % len(self)
+                    if retry_count < max_retries:
+                        continue
+                    else:
+                        # If we've tried many times, return a dummy video or raise
+                        print(f"Warning: Could not find valid video after {max_retries} retries. "
+                              f"Last error: {e}")
+                        raise RuntimeError(
+                            f"Failed to load video after {max_retries} retries. "
+                            f"Dataset may have too many corrupted videos. "
+                            f"Last error: {e}"
+                        )
+                else:
+                    # Re-raise if it's a different error
+                    raise
 
 
 class MyKinetics(Kinetics):
@@ -150,12 +222,56 @@ class MyKinetics(Kinetics):
         self.transform = transform
 
     def __getitem__(self, idx: int) -> Tuple[Tensor, int]:
-        video, audio, label = super().__getitem__(idx)
-
-        if self.transform is not None:
-            video = self.transform(video)
-
-        return video, label
+        """
+        Get video clip with error handling for corrupted videos.
+        
+        If a video is corrupted, tries to get the next valid video.
+        This handles cases where videos have missing moov atoms or other corruption issues.
+        """
+        max_retries = 10  # Maximum number of retries to find a valid video
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                video, audio, label = super().__getitem__(idx)
+                
+                # Check if video is valid (has frames)
+                if video is None or video.numel() == 0:
+                    raise ValueError(f"Empty video at index {idx}")
+                
+                if self.transform is not None:
+                    video = self.transform(video)
+                
+                return video, label
+                
+            except Exception as e:
+                # Handle various video reading errors
+                error_msg = str(e).lower()
+                if any(keyword in error_msg for keyword in [
+                    'moov atom not found',
+                    'invalid data',
+                    'av.error',
+                    'attributeerror',
+                    'corrupted',
+                    'invalid file',
+                ]):
+                    # Corrupted video - try next index
+                    retry_count += 1
+                    idx = (idx + 1) % len(self)
+                    if retry_count < max_retries:
+                        continue
+                    else:
+                        # If we've tried many times, return a dummy video or raise
+                        print(f"Warning: Could not find valid video after {max_retries} retries. "
+                              f"Last error: {e}")
+                        raise RuntimeError(
+                            f"Failed to load video after {max_retries} retries. "
+                            f"Dataset may have too many corrupted videos. "
+                            f"Last error: {e}"
+                        )
+                else:
+                    # Re-raise if it's a different error
+                    raise
 
 
 def get_dataset(dataset_name: str, **kwargs) -> Union[MyUCF101, MyKinetics]:
