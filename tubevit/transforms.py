@@ -30,27 +30,23 @@ class Normalize(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            x: Video tensor of shape (T, C, H, W), (C, T, H, W), or (B, C, T, H, W)
+            x: Video tensor of shape (T, C, H, W), (C, T, H, W), (T, H, W, C), (H, W, C, T), or (B, C, T, H, W)
         Returns:
             Normalized tensor (same layout as input)
         """
         if x.dim() == 4:
-            # Detect layout: channel dim is 3
-            if x.shape[1] == 3:
-                # (T, C, H, W) - torchvision ToTensorVideo output
-                return (x - self.mean) / self.std
-            elif x.shape[0] == 3:
-                # (C, T, H, W)
-                return (x - self.mean) / self.std
-            elif x.shape[3] == 3:
-                # (T, H, W, C) - channel last
-                mean = self.mean.view(1, 1, 1, 3)
-                std = self.std.view(1, 1, 1, 3)
-                return (x - mean) / std
-            else:
-                raise ValueError(f"Normalize: cannot infer channel dim for shape {x.shape}")
+            # Find which dimension has C=3 and broadcast mean/std there
+            for c_dim in range(4):
+                if x.shape[c_dim] == 3:
+                    # Broadcast (3, 1, 1, 1) to the right place: insert 1s for other dims
+                    view = [1] * 4
+                    view[c_dim] = 3
+                    mean = self.mean.view(view)
+                    std = self.std.view(view)
+                    return (x - mean) / std
+            raise ValueError(f"Normalize: no dimension has size 3 for shape {x.shape}")
         elif x.dim() == 5:
-            # (B, C, T, H, W)
+            # (B, C, T, H, W) - channel at dim 1
             mean = self.mean.unsqueeze(0)  # (1, 3, 1, 1, 1)
             std = self.std.unsqueeze(0)
             return (x - mean) / std
