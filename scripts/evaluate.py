@@ -20,7 +20,7 @@ from torchmetrics.functional import accuracy, auroc, confusion_matrix, f1_score,
 from torchvision.transforms import transforms as T
 from torchvision.transforms._transforms_video import ToTensorVideo
 
-from tubevit.dataset import get_dataset
+from tubevit.dataset import get_dataset, set_debug_shapes
 from tubevit.model import TubeViTLightningModule
 from utils.constant import IMAGENET_MEAN, IMAGENET_STD
 from utils.config_loader import load_config, merge_config_with_args, get_config_value
@@ -47,6 +47,7 @@ torch.set_float32_matmul_precision('medium')
 @click.option("--verbose", type=bool, is_flag=True, show_default=True, default=False, help="Show input video")
 @click.option("--run-name", type=str, default=None, help="Name for this evaluation run. If not provided, will be auto-generated.")
 @click.option("--single-clip-per-video", type=bool, is_flag=True, show_default=True, default=False, help="Use only 1 clip per video (faster but less robust). If False, aggregates predictions from multiple clips per video.")
+@click.option("--debug-shapes", type=bool, is_flag=True, show_default=True, default=False, help="Enable debug logging for video tensor shapes through the pipeline.")
 def main(
     config,
     dataset,
@@ -63,6 +64,7 @@ def main(
     verbose,
     run_name,
     single_clip_per_video,
+    debug_shapes,
 ):
     # Load configuration from file if provided
     cfg = {}
@@ -209,6 +211,11 @@ def main(
         dataset_kwargs['split'] = 'val'
         # num_classes is handled by get_dataset based on dataset_name
     
+    # Enable debug shape logging if requested
+    if debug_shapes:
+        set_debug_shapes(True)
+        print("\n[DEBUG] Shape logging enabled - will show tensor shapes through pipeline")
+    
     # Create dataset instance using factory
     print(f"\n{'='*60}")
     print(f"Initializing {dataset_name} dataset...")
@@ -257,8 +264,21 @@ def main(
         sampler=val_sampler,
     )
 
+    print(f"\n{'='*60}")
+    print("Loading first batch to verify shapes...")
+    print(f"{'='*60}")
     x, y = next(iter(val_dataloader))
-    print(x.shape)
+    print(f"\nBatch tensor shape: {x.shape}")
+    print(f"  - Expected format: (B, C, T, H, W) = (batch, channels, time, height, width)")
+    if x.dim() == 5:
+        B, dim1, dim2, dim3, dim4 = x.shape
+        if dim1 == 3:
+            print(f"  - Detected: (B={B}, C={dim1}, T={dim2}, H={dim3}, W={dim4}) ✓ Correct format!")
+        else:
+            print(f"  - WARNING: dim1={dim1}, expected C=3. Format may be incorrect!")
+            print(f"  - If this fails, check _ensure_thwc and transform pipeline.")
+    print(f"Batch labels shape: {y.shape}")
+    print(f"{'='*60}\n")
 
     model = TubeViTLightningModule.load_from_checkpoint(model_path)
 

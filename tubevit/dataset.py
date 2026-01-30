@@ -21,13 +21,25 @@ def _ensure_uint8_video(video: Tensor) -> Tensor:
     return video
 
 
+# Global debug flag for shape logging
+_DEBUG_SHAPES = False
+
+def set_debug_shapes(enabled: bool):
+    """Enable/disable debug shape logging."""
+    global _DEBUG_SHAPES
+    _DEBUG_SHAPES = enabled
+
+
 def _ensure_thwc(video: Tensor) -> Tensor:
     """
     Ensure video is (T, H, W, C). 
-    Some backends return (H, W, T, C) or (H, W, C, T); convert so Resize doesn't touch channels.
+    Different backends return different formats; convert so ToTensorVideo works correctly.
+    ToTensorVideo expects (T, H, W, C) and outputs (C, T, H, W).
     """
     if video.dim() != 4:
         return video
+    
+    original_shape = video.shape
     
     # Typical T values for video clips
     typical_T = range(4, 257)  # 4 to 256 frames
@@ -35,12 +47,38 @@ def _ensure_thwc(video: Tensor) -> Tensor:
     # Case 1: (H, W, T, C) - last dim is 3 (C), third is small (T), first two are spatial
     if (video.shape[3] == 3 and video.shape[2] in typical_T and
             video.shape[0] >= 100 and video.shape[1] >= 100):
-        return video.permute(2, 0, 1, 3)  # (H, W, T, C) -> (T, H, W, C)
+        video = video.permute(2, 0, 1, 3)  # (H, W, T, C) -> (T, H, W, C)
+        if _DEBUG_SHAPES:
+            print(f"  [_ensure_thwc] Case 1 (H,W,T,C): {original_shape} -> {video.shape}")
+        return video
     
     # Case 2: (H, W, C, T) - third dim is 3 (C), last is small (T), first two are spatial
     if (video.shape[2] == 3 and video.shape[3] in typical_T and
             video.shape[0] >= 100 and video.shape[1] >= 100):
-        return video.permute(3, 0, 1, 2)  # (H, W, C, T) -> (T, H, W, C)
+        video = video.permute(3, 0, 1, 2)  # (H, W, C, T) -> (T, H, W, C)
+        if _DEBUG_SHAPES:
+            print(f"  [_ensure_thwc] Case 2 (H,W,C,T): {original_shape} -> {video.shape}")
+        return video
+    
+    # Case 3: (T, C, H, W) - second dim is 3 (C), first is small (T), last two are spatial
+    # This is the PyTorch video format; convert to THWC for ToTensorVideo
+    if (video.shape[1] == 3 and video.shape[0] in typical_T and
+            video.shape[2] >= 100 and video.shape[3] >= 100):
+        video = video.permute(0, 2, 3, 1)  # (T, C, H, W) -> (T, H, W, C)
+        if _DEBUG_SHAPES:
+            print(f"  [_ensure_thwc] Case 3 (T,C,H,W): {original_shape} -> {video.shape}")
+        return video
+    
+    # Case 4: (C, T, H, W) - first dim is 3 (C), second is small (T), last two are spatial
+    if (video.shape[0] == 3 and video.shape[1] in typical_T and
+            video.shape[2] >= 100 and video.shape[3] >= 100):
+        video = video.permute(1, 2, 3, 0)  # (C, T, H, W) -> (T, H, W, C)
+        if _DEBUG_SHAPES:
+            print(f"  [_ensure_thwc] Case 4 (C,T,H,W): {original_shape} -> {video.shape}")
+        return video
+    
+    if _DEBUG_SHAPES:
+        print(f"  [_ensure_thwc] No case matched, unchanged: {original_shape}")
     
     return video
 
@@ -154,6 +192,8 @@ class MyUCF101(UCF101):
         
         self.transform = transform
 
+    _logged_first_sample = False  # Class variable to log only first sample
+
     def __getitem__(self, idx: int) -> Tuple[Tensor, int]:
         """
         Get video clip with error handling for corrupted videos.
@@ -169,14 +209,29 @@ class MyUCF101(UCF101):
                 video, audio, info, video_idx = self.video_clips.get_clip(idx)
                 label = self.samples[self.indices[video_idx]][1]
                 
+                # Debug logging for first sample
+                log_this = _DEBUG_SHAPES and not MyUCF101._logged_first_sample
+                if log_this:
+                    print(f"\n[MyUCF101.__getitem__] idx={idx}")
+                    print(f"  Raw video: shape={video.shape}, dtype={video.dtype}")
+                
                 # Check if video is valid (has frames)
                 if video is None or video.numel() == 0:
                     raise ValueError(f"Empty video at index {idx}")
                 
                 video = _ensure_uint8_video(video)
+                if log_this:
+                    print(f"  After _ensure_uint8_video: shape={video.shape}, dtype={video.dtype}")
+                
                 video = _ensure_thwc(video)
+                if log_this:
+                    print(f"  After _ensure_thwc: shape={video.shape}, dtype={video.dtype}")
+                
                 if self.transform is not None:
                     video = self.transform(video)
+                    if log_this:
+                        print(f"  After transform: shape={video.shape}, dtype={video.dtype}")
+                        MyUCF101._logged_first_sample = True
                 
                 return video, label
                 
@@ -262,6 +317,8 @@ class MyKinetics(Kinetics):
         
         self.transform = transform
 
+    _logged_first_sample = False  # Class variable to log only first sample
+
     def __getitem__(self, idx: int) -> Tuple[Tensor, int]:
         """
         Get video clip with error handling for corrupted videos.
@@ -276,14 +333,29 @@ class MyKinetics(Kinetics):
             try:
                 video, audio, label = super().__getitem__(idx)
                 
+                # Debug logging for first sample
+                log_this = _DEBUG_SHAPES and not MyKinetics._logged_first_sample
+                if log_this:
+                    print(f"\n[MyKinetics.__getitem__] idx={idx}")
+                    print(f"  Raw video: shape={video.shape}, dtype={video.dtype}")
+                
                 # Check if video is valid (has frames)
                 if video is None or video.numel() == 0:
                     raise ValueError(f"Empty video at index {idx}")
                 
                 video = _ensure_uint8_video(video)
+                if log_this:
+                    print(f"  After _ensure_uint8_video: shape={video.shape}, dtype={video.dtype}")
+                
                 video = _ensure_thwc(video)
+                if log_this:
+                    print(f"  After _ensure_thwc: shape={video.shape}, dtype={video.dtype}")
+                
                 if self.transform is not None:
                     video = self.transform(video)
+                    if log_this:
+                        print(f"  After transform: shape={video.shape}, dtype={video.dtype}")
+                        MyKinetics._logged_first_sample = True
                 
                 return video, label
                 
