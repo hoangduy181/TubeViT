@@ -44,7 +44,11 @@ class Normalize(nn.Module):
                     mean = self.mean.view(view)
                     std = self.std.view(view)
                     return (x - mean) / std
-            raise ValueError(f"Normalize: no dimension has size 3 for shape {x.shape}")
+            # Fallback: (H, W, T, C) was resized and C=3 was lost -> (H, W, T, H). Not fixable here.
+            raise ValueError(
+                f"Normalize: no dimension has size 3 for shape {x.shape}. "
+                "Ensure video is (T, H, W, C) before ToTensorVideo/Resize (dataset should use _ensure_thwc)."
+            )
         elif x.dim() == 5:
             # (B, C, T, H, W) - channel at dim 1
             mean = self.mean.unsqueeze(0)  # (1, 3, 1, 1, 1)

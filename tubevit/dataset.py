@@ -20,6 +20,17 @@ def _ensure_uint8_video(video: Tensor) -> Tensor:
         return video
     return video
 
+
+def _ensure_thwc(video: Tensor) -> Tensor:
+    """Ensure video is (T, H, W, C). Some backends return (H, W, T, C); convert so Resize doesn't touch channels."""
+    if video.dim() != 4:
+        return video
+    # (H, W, T, C): last dim is 3 (C), third is small (T), first two are spatial
+    if (video.shape[3] == 3 and video.shape[2] in (8, 16, 32, 64, 128) and
+            video.shape[0] >= 100 and video.shape[1] >= 100):
+        return video.permute(2, 0, 1, 3)  # (H, W, T, C) -> (T, H, W, C)
+    return video
+
 # Suppress pts_unit warning from torchvision video reading
 warnings.filterwarnings('ignore', message=".*pts_unit.*", category=UserWarning)
 
@@ -150,6 +161,7 @@ class MyUCF101(UCF101):
                     raise ValueError(f"Empty video at index {idx}")
                 
                 video = _ensure_uint8_video(video)
+                video = _ensure_thwc(video)
                 if self.transform is not None:
                     video = self.transform(video)
                 
@@ -256,6 +268,7 @@ class MyKinetics(Kinetics):
                     raise ValueError(f"Empty video at index {idx}")
                 
                 video = _ensure_uint8_video(video)
+                video = _ensure_thwc(video)
                 if self.transform is not None:
                     video = self.transform(video)
                 
