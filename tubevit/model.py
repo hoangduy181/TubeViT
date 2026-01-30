@@ -215,7 +215,7 @@ class SparseTubesTokenizer(nn.Module):
                     tube = tube.view(n_batch, d_eff * k, t_out // k, h_out, w_out)  # (n, hidden_dim, t_out/k, h_out, w_out)
                     
             # Reshape to (n, hidden_dim, num_tokens) for concatenation
-            tube = tube.reshape((n_batch, self.hidden_dim, -1))
+            tube = tube.reshape((tube.shape[0], self.hidden_dim, -1))
             # Shape: (n, hidden_dim, num_tokens)
 
             tubes.append(tube)
