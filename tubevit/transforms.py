@@ -24,22 +24,38 @@ class Normalize(nn.Module):
     """
     def __init__(self, mean: List[float], std: List[float]):
         super().__init__()
-        self.register_buffer('mean', torch.tensor(mean).view(1, 3, 1, 1, 1))
-        self.register_buffer('std', torch.tensor(std).view(1, 3, 1, 1, 1))
+        self.register_buffer('mean', torch.tensor(mean).view(3, 1, 1, 1))
+        self.register_buffer('std', torch.tensor(std).view(3, 1, 1, 1))
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            x: Video tensor of shape (C, T, H, W) or (B, C, T, H, W)
+            x: Video tensor of shape (T, C, H, W), (C, T, H, W), or (B, C, T, H, W)
         Returns:
-            Normalized tensor
+            Normalized tensor (same layout as input)
         """
-        if x.dim() == 4:  # (C, T, H, W)
-            x = x.unsqueeze(0)  # Add batch dimension
-            x = (x - self.mean) / self.std
-            return x.squeeze(0)
-        else:  # (B, C, T, H, W)
-            return (x - self.mean) / self.std
+        if x.dim() == 4:
+            # Detect layout: channel dim is 3
+            if x.shape[1] == 3:
+                # (T, C, H, W) - torchvision ToTensorVideo output
+                return (x - self.mean) / self.std
+            elif x.shape[0] == 3:
+                # (C, T, H, W)
+                return (x - self.mean) / self.std
+            elif x.shape[3] == 3:
+                # (T, H, W, C) - channel last
+                mean = self.mean.view(1, 1, 1, 3)
+                std = self.std.view(1, 1, 1, 3)
+                return (x - mean) / std
+            else:
+                raise ValueError(f"Normalize: cannot infer channel dim for shape {x.shape}")
+        elif x.dim() == 5:
+            # (B, C, T, H, W)
+            mean = self.mean.unsqueeze(0)  # (1, 3, 1, 1, 1)
+            std = self.std.unsqueeze(0)
+            return (x - mean) / std
+        else:
+            raise ValueError(f"Normalize: expected 4D or 5D tensor, got {x.dim()}D")
 
 
 class Permute(nn.Module):
