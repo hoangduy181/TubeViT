@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 import lightning.pytorch as pl
 import seaborn as sns
 import torch
-from tubevit.transforms import Normalize, Permute
+from tubevit.transforms import Normalize
 
 from torch.utils.data import DataLoader, SequentialSampler, Subset, RandomSampler
 from torchmetrics.functional import accuracy, auroc, confusion_matrix, f1_score, precision, recall
@@ -174,12 +174,18 @@ def main(
         else:
             raise ValueError(f"label_path is required for UCF101: {label_path}")
 
+    # Transform pipeline:
+    # 1. _ensure_thwc (in dataset): any format -> (T, H, W, C)
+    # 2. ToTensorVideo: (T, H, W, C) -> (C, T, H, W) [uint8 -> float32]
+    # 3. Resize: (C, T, H, W) -> (C, T, H, W) [resize spatial dims]
+    # 4. Normalize: (C, T, H, W) -> (C, T, H, W) [ImageNet normalization]
+    # Final output per sample: (C, T, H, W) -> batched: (B, C, T, H, W)
     test_transform = T.Compose(
         [
-            ToTensorVideo(),
+            ToTensorVideo(),  # (T, H, W, C) -> (C, T, H, W)
             T.Resize(size=video_size, antialias=True),
             Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
-            Permute(dims=[1, 0, 2, 3]),  # (T, C, H, W) -> (C, T, H, W) for model
+            # No Permute needed - ToTensorVideo already outputs (C, T, H, W)
         ]
     )
 
