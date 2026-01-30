@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 import lightning.pytorch as pl
 import seaborn as sns
 import torch
-from tubevit.transforms import Normalize
+from tubevit.transforms import Normalize, Permute
 
 from torch.utils.data import DataLoader, SequentialSampler, Subset, RandomSampler
 from torchmetrics.functional import accuracy, auroc, confusion_matrix, f1_score, precision, recall
@@ -177,6 +177,7 @@ def main(
             ToTensorVideo(),
             T.Resize(size=video_size, antialias=True),
             Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+            Permute(dims=[1, 0, 2, 3]),  # (T, C, H, W) -> (C, T, H, W) for model
         ]
     )
 
