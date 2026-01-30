@@ -2,8 +2,23 @@ import os
 import warnings
 from typing import Callable, Optional, Tuple, Union
 
+import torch
 from torch import Tensor
 from torchvision.datasets import UCF101, Kinetics
+
+
+def _ensure_uint8_video(video: Tensor) -> Tensor:
+    """Convert video to uint8 if needed. ToTensorVideo() expects uint8 input."""
+    if video.dtype == torch.uint8:
+        return video
+    if video.dtype in (torch.float32, torch.float64):
+        # Float video: either [0, 1] or [0, 255]; clamp and convert
+        if video.max() <= 1.0:
+            video = (video * 255.0).clamp(0, 255).to(torch.uint8)
+        else:
+            video = video.clamp(0, 255).to(torch.uint8)
+        return video
+    return video
 
 # Suppress pts_unit warning from torchvision video reading
 warnings.filterwarnings('ignore', message=".*pts_unit.*", category=UserWarning)
@@ -134,6 +149,7 @@ class MyUCF101(UCF101):
                 if video is None or video.numel() == 0:
                     raise ValueError(f"Empty video at index {idx}")
                 
+                video = _ensure_uint8_video(video)
                 if self.transform is not None:
                     video = self.transform(video)
                 
@@ -239,6 +255,7 @@ class MyKinetics(Kinetics):
                 if video is None or video.numel() == 0:
                     raise ValueError(f"Empty video at index {idx}")
                 
+                video = _ensure_uint8_video(video)
                 if self.transform is not None:
                     video = self.transform(video)
                 
