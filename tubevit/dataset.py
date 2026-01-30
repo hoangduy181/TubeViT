@@ -22,13 +22,26 @@ def _ensure_uint8_video(video: Tensor) -> Tensor:
 
 
 def _ensure_thwc(video: Tensor) -> Tensor:
-    """Ensure video is (T, H, W, C). Some backends return (H, W, T, C); convert so Resize doesn't touch channels."""
+    """
+    Ensure video is (T, H, W, C). 
+    Some backends return (H, W, T, C) or (H, W, C, T); convert so Resize doesn't touch channels.
+    """
     if video.dim() != 4:
         return video
-    # (H, W, T, C): last dim is 3 (C), third is small (T), first two are spatial
-    if (video.shape[3] == 3 and video.shape[2] in (8, 16, 32, 64, 128) and
+    
+    # Typical T values for video clips
+    typical_T = range(4, 257)  # 4 to 256 frames
+    
+    # Case 1: (H, W, T, C) - last dim is 3 (C), third is small (T), first two are spatial
+    if (video.shape[3] == 3 and video.shape[2] in typical_T and
             video.shape[0] >= 100 and video.shape[1] >= 100):
         return video.permute(2, 0, 1, 3)  # (H, W, T, C) -> (T, H, W, C)
+    
+    # Case 2: (H, W, C, T) - third dim is 3 (C), last is small (T), first two are spatial
+    if (video.shape[2] == 3 and video.shape[3] in typical_T and
+            video.shape[0] >= 100 and video.shape[1] >= 100):
+        return video.permute(3, 0, 1, 2)  # (H, W, C, T) -> (T, H, W, C)
+    
     return video
 
 # Suppress pts_unit warning from torchvision video reading
