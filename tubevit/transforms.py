@@ -159,7 +159,8 @@ class RandAugment(nn.Module):
         
         if self.sampling_type == 'gaussian':
             # Sample from gaussian distribution
-            sampled = torch.normal(mean=base_magnitude, std=self.sampling_std)
+            # torch.normal with float mean/std requires size parameter
+            sampled = torch.normal(mean=base_magnitude, std=self.sampling_std, size=(1,))
             sampled = torch.clamp(sampled, 0.0, 1.0).item()
         else:  # uniform
             # Sample uniformly around base magnitude
