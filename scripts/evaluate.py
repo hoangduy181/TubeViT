@@ -287,8 +287,58 @@ def main(
     print(f"{'='*60}\n")
 
     model = TubeViTLightningModule.load_from_checkpoint(model_path)
+    
+    # Get model's actual num_classes from checkpoint
+    model_num_classes = model.num_classes
+    print(f"\n{'='*60}")
+    print("Model Information:")
+    print(f"{'='*60}")
+    print(f"Model's num_classes (from checkpoint): {model_num_classes}")
+    print(f"Specified num_classes (from CLI/config): {num_classes}")
+    
+    if model_num_classes != num_classes:
+        print(f"\n⚠️  WARNING: Mismatch detected!")
+        print(f"   The model was trained with {model_num_classes} classes,")
+        print(f"   but you specified {num_classes} classes.")
+        print(f"   Using model's num_classes ({model_num_classes}) for evaluation metrics.")
+        num_classes = model_num_classes
+    else:
+        print(f"✓ num_classes match!")
+    
+    # Verify labels match model's num_classes
+    if labels is not None and len(labels) != num_classes:
+        print(f"\n⚠️  WARNING: Labels count mismatch!")
+        print(f"   Loaded {len(labels)} labels, but model has {num_classes} classes.")
+        print(f"   This may cause issues with confusion matrix labeling.")
+        if len(labels) > num_classes:
+            print(f"   Truncating labels to first {num_classes} classes.")
+            labels = labels[:num_classes]
+        else:
+            print(f"   Padding labels with generic class names.")
+            labels = labels + [f"Class_{i}" for i in range(len(labels), num_classes)]
+    print(f"{'='*60}\n")
 
-    trainer = pl.Trainer(accelerator="auto", default_root_dir="lightning_predict_logs")
+    # Check GPU availability and show device info
+    print(f"\n{'='*60}")
+    print("Device Information:")
+    print(f"{'='*60}")
+    print(f"CUDA available: {torch.cuda.is_available()}")
+    if torch.cuda.is_available():
+        print(f"CUDA device count: {torch.cuda.device_count()}")
+        print(f"Current CUDA device: {torch.cuda.current_device()}")
+        print(f"CUDA device name: {torch.cuda.get_device_name(0)}")
+        print(f"CUDA memory allocated: {torch.cuda.memory_allocated(0) / 1024**2:.1f} MB")
+    print(f"{'='*60}\n")
+
+    # Use GPU if available, with explicit settings
+    trainer = pl.Trainer(
+        accelerator="auto",
+        devices="auto",
+        default_root_dir="lightning_predict_logs",
+        logger=False,  # Disable logging for faster prediction
+    )
+    
+    print("Starting prediction...")
     predictions = trainer.predict(model, dataloaders=val_dataloader)
     
     # Use predictions directly
