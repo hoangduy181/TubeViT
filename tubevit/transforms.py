@@ -474,6 +474,70 @@ class UniformTemporalSubsample(nn.Module):
         return self.forward(x)
 
 
+class RandomTemporalCrop(nn.Module):
+    """
+    Randomly crop a contiguous segment of frames from video.
+    
+    This is useful when you have more frames than needed and want to
+    randomly sample a segment each time (data augmentation).
+    
+    Args:
+        num_frames: Number of frames to crop
+        
+    Example:
+        If input has 64 frames and num_frames=32, randomly selects
+        a contiguous 32-frame segment starting at a random position.
+    """
+    def __init__(self, num_frames: int):
+        super().__init__()
+        self.num_frames = num_frames
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: Video tensor of shape (C, T, H, W) or (T, H, W, C)
+        Returns:
+            Cropped tensor with num_frames frames
+        """
+        if x.dim() != 4:
+            raise ValueError(f"Expected 4D tensor, got {x.dim()}D")
+        
+        # Detect format
+        if x.shape[0] == 3:  # (C, T, H, W)
+            T = x.shape[1]
+            dim = 1
+        else:  # (T, H, W, C)
+            T = x.shape[0]
+            dim = 0
+        
+        # If video is shorter than requested, pad by repeating last frame
+        if T < self.num_frames:
+            pad_size = self.num_frames - T
+            if dim == 1:  # (C, T, H, W)
+                last_frame = x[:, -1:, :, :].expand(-1, pad_size, -1, -1)
+                x = torch.cat([x, last_frame], dim=1)
+            else:  # (T, H, W, C)
+                last_frame = x[-1:, :, :, :].expand(pad_size, -1, -1, -1)
+                x = torch.cat([x, last_frame], dim=0)
+            return x
+        
+        # Random start position
+        max_start = T - self.num_frames
+        if max_start > 0:
+            start = torch.randint(0, max_start + 1, (1,)).item()
+        else:
+            start = 0
+        
+        # Crop
+        if dim == 1:  # (C, T, H, W)
+            return x[:, start:start + self.num_frames, :, :]
+        else:  # (T, H, W, C)
+            return x[start:start + self.num_frames, :, :, :]
+    
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        return self.forward(x)
+
+
 class ShortSideScale(nn.Module):
     """
     Scale video so the short side has the given size.

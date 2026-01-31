@@ -52,6 +52,7 @@ torch.set_float32_matmul_precision('medium')
 @click.option("--run-name", type=str, default=None, help="Name for this training run. If not provided, will be auto-generated.")
 @click.option("-w", "--weight-path", type=click.Path(exists=True), default=None, help="Path to pretrained weights (from convert_vit_weight.py or previous training). Overrides config.")
 @click.option("--no-augment", type=bool, is_flag=True, default=False, help="Disable RandAugment for faster training/testing.")
+@click.option("--single-clip-per-video", type=bool, is_flag=True, default=False, help="Use only 1 clip per video (faster training, reduces dataset size).")
 def main(
     config,
     dataset,
@@ -69,6 +70,7 @@ def main(
     run_name,
     weight_path,
     no_augment,
+    single_clip_per_video,
 ):
     # Load configuration from file if provided
     cfg = {}
@@ -94,6 +96,7 @@ def main(
         'run_name': run_name,
         'weight_path': weight_path,
         'no_augment': no_augment,
+        'single_clip_per_video': single_clip_per_video,
     }
     
     # Merge config with CLI args (CLI args take precedence)
@@ -225,6 +228,14 @@ def main(
         print(f"No precomputed metadata found. Will create {train_metadata_file} after loading dataset.")
 
     print("\nInitializing training dataset...")
+    
+    # Single clip per video optimization
+    single_clip_per_video = get_config_value(merged_config, 'single_clip_per_video', False)
+    if single_clip_per_video:
+        print("⚡ Single clip per video mode ENABLED (faster training)")
+        print("   - Only 1 random clip sampled per video")
+        print("   - Dataset size = number of videos (not clips)")
+    
     # Prepare dataset kwargs
     train_dataset_kwargs = {
         'root': dataset_root,
@@ -233,6 +244,11 @@ def main(
         'transform': train_transform,
         '_precomputed_metadata': train_precomputed_metadata,
     }
+    
+    # Add step_between_clips to get 1 clip per video
+    # Setting to a very large value (e.g., 1000000) ensures only 1 clip per video
+    if single_clip_per_video:
+        train_dataset_kwargs['step_between_clips'] = 1000000  # Effectively 1 clip per video
     
     # Handle dataset-specific parameters
     if dataset_name == 'ucf101':
@@ -274,6 +290,10 @@ def main(
         'transform': test_transform,
         '_precomputed_metadata': val_precomputed_metadata,
     }
+    
+    # Add step_between_clips to get 1 clip per video (for faster validation)
+    if single_clip_per_video:
+        val_dataset_kwargs['step_between_clips'] = 1000000
     
     # Handle dataset-specific parameters
     if dataset_name == 'ucf101':
