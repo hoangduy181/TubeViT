@@ -546,21 +546,31 @@ class SegmentRandomTemporalSample(nn.Module):
     This provides better temporal coverage than contiguous cropping while maintaining
     randomness for data augmentation.
     
+    Behavior based on video length:
+    - Video >= num_segments: Divide into segments, random sample from each
+    - Video < num_segments: Use uniform sampling (no randomness possible)
+    
     Args:
-        num_segments: Number of segments to divide video into (= number of output frames)
+        num_segments: Number of output frames (= number of segments)
+        min_segment_size: Minimum frames per segment for random sampling (default: 2)
+                         If segment_size < min_segment_size, falls back to uniform sampling
         
     Example:
-        Video with 128 frames, num_segments=32:
-        - Divide into 32 segments of 4 frames each
-        - Randomly pick 1 frame from each segment
-        - Output: 32 frames spread across entire video
+        Video with 100 frames, num_segments=32:
+        - segment_size = 100/32 = 3.125
+        - Each segment has ~3 frames to randomly choose from
+        - Output: 32 frames spread across video with randomness
         
-        Segment:  [0-3] [4-7] [8-11] ... [124-127]
-        Sampled:    2     5     10   ...    126
+        Video with 32 frames, num_segments=32:
+        - segment_size = 1 (< min_segment_size)
+        - Falls back to uniform sampling (no randomness)
+        - Output: all 32 frames in order
     """
-    def __init__(self, num_segments: int = 32):
+    def __init__(self, num_segments: int = 32, min_segment_size: int = 2):
         super().__init__()
         self.num_segments = num_segments
+        self.min_segment_size = min_segment_size
+        self._logged = False  # For one-time logging
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -580,27 +590,45 @@ class SegmentRandomTemporalSample(nn.Module):
             T = x.shape[0]
             dim = 0
         
-        # If video is shorter than num_segments, pad by repeating last frame
-        if T < self.num_segments:
-            pad_size = self.num_segments - T
-            if dim == 1:  # (C, T, H, W)
-                last_frame = x[:, -1:, :, :].expand(-1, pad_size, -1, -1)
-                x = torch.cat([x, last_frame], dim=1)
-            else:  # (T, H, W, C)
-                last_frame = x[-1:, :, :, :].expand(pad_size, -1, -1, -1)
-                x = torch.cat([x, last_frame], dim=0)
-            T = self.num_segments
-        
         # Calculate segment size
         segment_size = T / self.num_segments
         
-        # Sample one random frame from each segment
+        # Case 1: Video too short - need to pad
+        if T < self.num_segments:
+            # Uniform sample what we have, then pad with last frame
+            if T > 0:
+                # Use all available frames uniformly spread
+                indices = torch.linspace(0, T - 1, min(T, self.num_segments)).long()
+                if len(indices) < self.num_segments:
+                    # Pad with last index
+                    pad_indices = torch.full((self.num_segments - len(indices),), T - 1, dtype=torch.long)
+                    indices = torch.cat([indices, pad_indices])
+            else:
+                indices = torch.zeros(self.num_segments, dtype=torch.long)
+            
+            if dim == 1:
+                return x[:, indices, :, :]
+            else:
+                return x[indices, :, :, :]
+        
+        # Case 2: Segment size too small for random sampling - use uniform
+        if segment_size < self.min_segment_size:
+            # Not enough frames per segment for meaningful randomness
+            # Use uniform sampling instead
+            indices = torch.linspace(0, T - 1, self.num_segments).long()
+            
+            if dim == 1:
+                return x[:, indices, :, :]
+            else:
+                return x[indices, :, :, :]
+        
+        # Case 3: Enough frames - do segment-based random sampling
         indices = []
         for i in range(self.num_segments):
             segment_start = int(i * segment_size)
             segment_end = int((i + 1) * segment_size)
-            # Ensure segment_end doesn't exceed T
-            segment_end = min(segment_end, T)
+            segment_end = min(segment_end, T)  # Ensure we don't exceed T
+            
             # Random index within segment
             if segment_end > segment_start:
                 idx = torch.randint(segment_start, segment_end, (1,)).item()
@@ -610,7 +638,6 @@ class SegmentRandomTemporalSample(nn.Module):
         
         indices = torch.tensor(indices, dtype=torch.long, device=x.device)
         
-        # Sample frames
         if dim == 1:  # (C, T, H, W)
             return x[:, indices, :, :]
         else:  # (T, H, W, C)
