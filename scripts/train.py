@@ -51,6 +51,7 @@ torch.set_float32_matmul_precision('medium')
 @click.option("--preview-video", type=bool, is_flag=True, show_default=True, default=False, help="Show input video")
 @click.option("--run-name", type=str, default=None, help="Name for this training run. If not provided, will be auto-generated.")
 @click.option("-w", "--weight-path", type=click.Path(exists=True), default=None, help="Path to pretrained weights (from convert_vit_weight.py or previous training). Overrides config.")
+@click.option("--no-augment", type=bool, is_flag=True, default=False, help="Disable RandAugment for faster training/testing.")
 def main(
     config,
     dataset,
@@ -67,6 +68,7 @@ def main(
     preview_video,
     run_name,
     weight_path,
+    no_augment,
 ):
     # Load configuration from file if provided
     cfg = {}
@@ -91,6 +93,7 @@ def main(
         'preview_video': preview_video,
         'run_name': run_name,
         'weight_path': weight_path,
+        'no_augment': no_augment,
     }
     
     # Merge config with CLI args (CLI args take precedence)
@@ -163,17 +166,30 @@ def main(
     # Get augmentation parameters from config
     rand_aug_magnitude = get_config_value(merged_config, 'augmentation.rand_augment.magnitude', 10)
     rand_aug_num_layers = get_config_value(merged_config, 'augmentation.rand_augment.num_layers', 2)
+    no_augment = get_config_value(merged_config, 'no_augment', False)
     
-    train_transform = T.Compose(
-        [
-            ToTensorVideo(),  # C, T, H, W
-            Permute(dims=[1, 0, 2, 3]),  # T, C, H, W
-            RandAugment(magnitude=rand_aug_magnitude, num_layers=rand_aug_num_layers),
-            Permute(dims=[1, 0, 2, 3]),  # C, T, H, W
-            T.Resize(size=video_size, antialias=True),
-            Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
-        ]
-    )
+    # Build transform pipeline - conditionally include RandAugment
+    if no_augment:
+        print("⚠️  RandAugment DISABLED (--no-augment flag)")
+        train_transform = T.Compose(
+            [
+                ToTensorVideo(),  # C, T, H, W
+                T.Resize(size=video_size, antialias=True),
+                Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+            ]
+        )
+    else:
+        print(f"✓ RandAugment enabled: magnitude={rand_aug_magnitude}, num_layers={rand_aug_num_layers}")
+        train_transform = T.Compose(
+            [
+                ToTensorVideo(),  # C, T, H, W
+                Permute(dims=[1, 0, 2, 3]),  # T, C, H, W
+                RandAugment(magnitude=rand_aug_magnitude, num_layers=rand_aug_num_layers),
+                Permute(dims=[1, 0, 2, 3]),  # C, T, H, W
+                T.Resize(size=video_size, antialias=True),
+                Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+            ]
+        )
 
     test_transform = T.Compose(
         [
@@ -278,6 +294,12 @@ def main(
     print(f"\n{'='*60}")
     print("Creating DataLoaders")
     print(f"{'='*60}")
+    # DataLoader optimizations for video loading:
+    # - persistent_workers: Keep workers alive between epochs (avoids re-spawning overhead)
+    # - prefetch_factor: Load more batches in advance (default is 2)
+    use_persistent_workers = num_workers > 0
+    prefetch = 4 if num_workers > 0 else None  # Prefetch more batches
+    
     train_dataloader = DataLoader(
         train_set,
         batch_size=batch_size,
@@ -285,8 +307,11 @@ def main(
         shuffle=True,
         drop_last=True,
         pin_memory=True,
+        persistent_workers=use_persistent_workers,
+        prefetch_factor=prefetch,
     )
     print(f"✓ Training DataLoader created: {len(train_dataloader)} batches")
+    print(f"  - persistent_workers: {use_persistent_workers}, prefetch_factor: {prefetch}")
 
     val_dataloader = DataLoader(
         val_set,
@@ -295,6 +320,8 @@ def main(
         shuffle=False,
         drop_last=True,
         pin_memory=True,
+        persistent_workers=use_persistent_workers,
+        prefetch_factor=prefetch,
     )
     print(f"✓ Validation DataLoader created: {len(val_dataloader)} batches")
 
