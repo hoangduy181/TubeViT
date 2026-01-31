@@ -538,6 +538,88 @@ class RandomTemporalCrop(nn.Module):
         return self.forward(x)
 
 
+class SegmentRandomTemporalSample(nn.Module):
+    """
+    Segment-based random temporal sampling (like TSN).
+    
+    Divides the video into N segments and randomly samples 1 frame from each segment.
+    This provides better temporal coverage than contiguous cropping while maintaining
+    randomness for data augmentation.
+    
+    Args:
+        num_segments: Number of segments to divide video into (= number of output frames)
+        
+    Example:
+        Video with 128 frames, num_segments=32:
+        - Divide into 32 segments of 4 frames each
+        - Randomly pick 1 frame from each segment
+        - Output: 32 frames spread across entire video
+        
+        Segment:  [0-3] [4-7] [8-11] ... [124-127]
+        Sampled:    2     5     10   ...    126
+    """
+    def __init__(self, num_segments: int = 32):
+        super().__init__()
+        self.num_segments = num_segments
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: Video tensor of shape (C, T, H, W) or (T, H, W, C)
+        Returns:
+            Sampled tensor with num_segments frames
+        """
+        if x.dim() != 4:
+            raise ValueError(f"Expected 4D tensor, got {x.dim()}D")
+        
+        # Detect format
+        if x.shape[0] == 3:  # (C, T, H, W)
+            T = x.shape[1]
+            dim = 1
+        else:  # (T, H, W, C)
+            T = x.shape[0]
+            dim = 0
+        
+        # If video is shorter than num_segments, pad by repeating last frame
+        if T < self.num_segments:
+            pad_size = self.num_segments - T
+            if dim == 1:  # (C, T, H, W)
+                last_frame = x[:, -1:, :, :].expand(-1, pad_size, -1, -1)
+                x = torch.cat([x, last_frame], dim=1)
+            else:  # (T, H, W, C)
+                last_frame = x[-1:, :, :, :].expand(pad_size, -1, -1, -1)
+                x = torch.cat([x, last_frame], dim=0)
+            T = self.num_segments
+        
+        # Calculate segment size
+        segment_size = T / self.num_segments
+        
+        # Sample one random frame from each segment
+        indices = []
+        for i in range(self.num_segments):
+            segment_start = int(i * segment_size)
+            segment_end = int((i + 1) * segment_size)
+            # Ensure segment_end doesn't exceed T
+            segment_end = min(segment_end, T)
+            # Random index within segment
+            if segment_end > segment_start:
+                idx = torch.randint(segment_start, segment_end, (1,)).item()
+            else:
+                idx = segment_start
+            indices.append(idx)
+        
+        indices = torch.tensor(indices, dtype=torch.long, device=x.device)
+        
+        # Sample frames
+        if dim == 1:  # (C, T, H, W)
+            return x[:, indices, :, :]
+        else:  # (T, H, W, C)
+            return x[indices, :, :, :]
+    
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        return self.forward(x)
+
+
 class ShortSideScale(nn.Module):
     """
     Scale video so the short side has the given size.

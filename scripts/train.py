@@ -19,7 +19,7 @@ import lightning.pytorch as pl
 import matplotlib.pyplot as plt
 import torch
 from lightning.pytorch.loggers import TensorBoardLogger
-from tubevit.transforms import Normalize, Permute, RandAugment
+from tubevit.transforms import Normalize, Permute, RandAugment, SegmentRandomTemporalSample
 from torch.utils.data import DataLoader
 from torchvision.transforms import transforms as T
 from torchvision.transforms._transforms_video import ToTensorVideo
@@ -52,7 +52,10 @@ torch.set_float32_matmul_precision('medium')
 @click.option("--run-name", type=str, default=None, help="Name for this training run. If not provided, will be auto-generated.")
 @click.option("-w", "--weight-path", type=click.Path(exists=True), default=None, help="Path to pretrained weights (from convert_vit_weight.py or previous training). Overrides config.")
 @click.option("--no-augment", type=bool, is_flag=True, default=False, help="Disable RandAugment for faster training/testing.")
-@click.option("--single-clip-per-video", type=bool, is_flag=True, default=False, help="Use only 1 clip per video (faster training, reduces dataset size).")
+@click.option("--clips-per-video", type=int, default=None, help="Number of clips per video. Default: all clips. Set to 1 for fastest training.")
+@click.option("--step-between-clips", type=int, default=None, help="Frames to skip between clip starts. Higher = fewer clips. Overrides --clips-per-video.")
+@click.option("--frame-step", type=int, default=1, help="Sample every N-th frame (default: 1 = all frames). E.g., 2 = half temporal resolution.")
+@click.option("--segment-sampling", type=bool, is_flag=True, default=False, help="Use segment-based random temporal sampling (like TSN). Divides video into N segments and samples 1 frame from each.")
 def main(
     config,
     dataset,
@@ -70,7 +73,10 @@ def main(
     run_name,
     weight_path,
     no_augment,
-    single_clip_per_video,
+    clips_per_video,
+    step_between_clips,
+    frame_step,
+    segment_sampling,
 ):
     # Load configuration from file if provided
     cfg = {}
@@ -96,7 +102,10 @@ def main(
         'run_name': run_name,
         'weight_path': weight_path,
         'no_augment': no_augment,
-        'single_clip_per_video': single_clip_per_video,
+        'clips_per_video': clips_per_video,
+        'step_between_clips': step_between_clips,
+        'frame_step': frame_step,
+        'segment_sampling': segment_sampling,
     }
     
     # Merge config with CLI args (CLI args take precedence)
@@ -170,37 +179,40 @@ def main(
     rand_aug_magnitude = get_config_value(merged_config, 'augmentation.rand_augment.magnitude', 10)
     rand_aug_num_layers = get_config_value(merged_config, 'augmentation.rand_augment.num_layers', 2)
     no_augment = get_config_value(merged_config, 'no_augment', False)
+    segment_sampling = get_config_value(merged_config, 'segment_sampling', False)
     
-    # Build transform pipeline - conditionally include RandAugment
+    # Build transform pipeline
+    train_transforms_list = [ToTensorVideo()]  # Start with: (T, H, W, C) -> (C, T, H, W)
+    
+    # Optional: Segment-based random temporal sampling (like TSN)
+    if segment_sampling:
+        print(f"⚡ Segment sampling ENABLED: dividing video into {frames_per_clip} segments, random sample from each")
+        train_transforms_list.append(SegmentRandomTemporalSample(num_segments=frames_per_clip))
+    
+    # Optional: RandAugment
     if no_augment:
         print("⚠️  RandAugment DISABLED (--no-augment flag)")
-        train_transform = T.Compose(
-            [
-                ToTensorVideo(),  # C, T, H, W
-                T.Resize(size=video_size, antialias=True),
-                Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
-            ]
-        )
     else:
         print(f"✓ RandAugment enabled: magnitude={rand_aug_magnitude}, num_layers={rand_aug_num_layers}")
-        train_transform = T.Compose(
-            [
-                ToTensorVideo(),  # C, T, H, W
-                Permute(dims=[1, 0, 2, 3]),  # T, C, H, W
-                RandAugment(magnitude=rand_aug_magnitude, num_layers=rand_aug_num_layers),
-                Permute(dims=[1, 0, 2, 3]),  # C, T, H, W
-                T.Resize(size=video_size, antialias=True),
-                Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
-            ]
-        )
+        train_transforms_list.append(Permute(dims=[1, 0, 2, 3]))  # C, T, H, W -> T, C, H, W
+        train_transforms_list.append(RandAugment(magnitude=rand_aug_magnitude, num_layers=rand_aug_num_layers))
+        train_transforms_list.append(Permute(dims=[1, 0, 2, 3]))  # T, C, H, W -> C, T, H, W
+    
+    # Resize and normalize
+    train_transforms_list.append(T.Resize(size=video_size, antialias=True))
+    train_transforms_list.append(Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD))
+    
+    train_transform = T.Compose(train_transforms_list)
 
-    test_transform = T.Compose(
-        [
-            ToTensorVideo(),
-            T.Resize(size=video_size, antialias=True),
-            Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
-        ]
-    )
+    # Test transform (no augmentation, uniform sampling for deterministic evaluation)
+    # Note: We use UniformTemporalSubsample for testing (deterministic)
+    #       even if segment_sampling is enabled for training
+    test_transforms_list = [ToTensorVideo()]
+    # UniformTemporalSubsample ensures consistent, reproducible evaluation
+    test_transforms_list.append(T.Resize(size=video_size, antialias=True))
+    test_transforms_list.append(Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD))
+    
+    test_transform = T.Compose(test_transforms_list)
 
     print(f"\n{'='*60}")
     print("Loading Training Dataset")
@@ -229,12 +241,12 @@ def main(
 
     print("\nInitializing training dataset...")
     
-    # Single clip per video optimization
-    single_clip_per_video = get_config_value(merged_config, 'single_clip_per_video', False)
-    if single_clip_per_video:
-        print("⚡ Single clip per video mode ENABLED (faster training)")
-        print("   - Only 1 random clip sampled per video")
-        print("   - Dataset size = number of videos (not clips)")
+    # Get clip control parameters from config
+    clips_per_video = get_config_value(merged_config, 'clips_per_video', None)
+    step_between_clips_cfg = get_config_value(merged_config, 'step_between_clips', None)
+    frame_step = get_config_value(merged_config, 'frame_step', 1)
+    
+    print("Clip sampling configuration:")
     
     # Prepare dataset kwargs
     train_dataset_kwargs = {
@@ -245,10 +257,29 @@ def main(
         '_precomputed_metadata': train_precomputed_metadata,
     }
     
-    # Add step_between_clips to get 1 clip per video
-    # Setting to a very large value (e.g., 1000000) ensures only 1 clip per video
-    if single_clip_per_video:
-        train_dataset_kwargs['step_between_clips'] = 1000000  # Effectively 1 clip per video
+    # Priority: --step-between-clips > --clips-per-video > default (all clips)
+    if step_between_clips_cfg is not None:
+        # Direct control over step_between_clips
+        train_dataset_kwargs['step_between_clips'] = step_between_clips_cfg
+        print(f"  ⚡ step_between_clips: {step_between_clips_cfg} (directly specified)")
+    elif clips_per_video is not None:
+        # Calculate step from clips_per_video
+        if clips_per_video == 1:
+            train_dataset_kwargs['step_between_clips'] = 1000000
+            print(f"  ⚡ clips_per_video: 1 (only 1 clip per video)")
+        else:
+            avg_video_frames = 300  # Approximate average video length
+            step = max(1, avg_video_frames // clips_per_video)
+            train_dataset_kwargs['step_between_clips'] = step
+            print(f"  ⚡ clips_per_video: {clips_per_video} (step_between_clips ≈ {step})")
+    else:
+        print("  - Using all available clips per video (default)")
+    
+    # Frame step (temporal subsampling at load time)
+    if frame_step > 1:
+        train_dataset_kwargs['frame_rate'] = frame_step  # Some datasets use frame_rate
+        train_dataset_kwargs['frames_between_clips'] = frame_step  # Alias for some datasets
+        print(f"  ⚡ frame_step: {frame_step} (loading every {frame_step}-th frame)")
     
     # Handle dataset-specific parameters
     if dataset_name == 'ucf101':
@@ -291,9 +322,21 @@ def main(
         '_precomputed_metadata': val_precomputed_metadata,
     }
     
-    # Add step_between_clips to get 1 clip per video (for faster validation)
-    if single_clip_per_video:
-        val_dataset_kwargs['step_between_clips'] = 1000000
+    # Apply same clip sampling settings as training for consistency
+    if step_between_clips_cfg is not None:
+        val_dataset_kwargs['step_between_clips'] = step_between_clips_cfg
+    elif clips_per_video is not None:
+        if clips_per_video == 1:
+            val_dataset_kwargs['step_between_clips'] = 1000000
+        else:
+            avg_video_frames = 300
+            step = max(1, avg_video_frames // clips_per_video)
+            val_dataset_kwargs['step_between_clips'] = step
+    
+    # Apply frame_step if specified
+    if frame_step > 1:
+        val_dataset_kwargs['frame_rate'] = frame_step
+        val_dataset_kwargs['frames_between_clips'] = frame_step
     
     # Handle dataset-specific parameters
     if dataset_name == 'ucf101':

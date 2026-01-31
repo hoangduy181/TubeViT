@@ -129,12 +129,31 @@ Options:
   --help                          Show this message and exit.
 ```
 
-### Example
+### Examples
 
-Convert ImageNet pre-trained weight to UCF101. `--num-classes` is 101 by default.
+```bash
+# UCF101 (101 classes) - saves to pretrained_weights/init_weight_vitb16_nc101_f32_v224x224.pt
+python scripts/convert_vit_weight.py -nc 101
 
-```commandline
-python scripts/convert_vit_weight.py
+# Kinetics-400 (400 classes)
+python scripts/convert_vit_weight.py -nc 400
+
+# Custom output path
+python scripts/convert_vit_weight.py -nc 101 -o custom/path/weights.pt
+```
+
+The script automatically:
+1. Downloads ViT-B/16 ImageNet weights from torchvision
+2. Inflates the 2D patch embedding to 3D for video
+3. Removes mismatched layers (position embedding, classification head)
+4. Saves weights to `pretrained_weights/` folder with informative names
+
+### Using Pretrained Weights in Training
+
+```bash
+# Specify weight path explicitly
+python scripts/train.py --config configs/ucf101.yaml \
+    -w pretrained_weights/init_weight_vitb16_nc101_f32_v224x224.pt
 ```
 
 ## Configuration Files
@@ -243,6 +262,67 @@ python scripts/train.py --dataset k700 -r /path/to/kinetics700 -nc 700
 ```
 
 **Note:** By default, `--num-workers` automatically uses all available CPUs for optimal data loading performance. You can override this by specifying `--num-workers <number>` if needed.
+
+### Training Speed Optimization
+
+Video training can be slow due to video decoding. Use these options to speed up training:
+
+#### Clip Sampling Options
+
+| Option | Description | Example |
+|--------|-------------|---------|
+| `--clips-per-video N` | Limit clips per video (default: all) | `--clips-per-video 1` |
+| `--step-between-clips N` | Skip N frames between clip starts | `--step-between-clips 100` |
+| `--frame-step N` | Load every N-th frame | `--frame-step 2` |
+
+#### Augmentation Options
+
+| Option | Description | Effect |
+|--------|-------------|--------|
+| `--no-augment` | Disable RandAugment | Faster iteration |
+| `--segment-sampling` | Segment-based random temporal sampling | Better coverage |
+
+#### Examples
+
+```bash
+# Fastest training (for debugging/testing)
+python scripts/train.py --config configs/ucf101.yaml \
+    --clips-per-video 1 \
+    --no-augment
+
+# Balanced speed + quality
+python scripts/train.py --config configs/ucf101.yaml \
+    --clips-per-video 3 \
+    --segment-sampling
+
+# Fine-grained control
+python scripts/train.py --config configs/ucf101.yaml \
+    --step-between-clips 100 \
+    --frame-step 2
+```
+
+#### Speed Comparison
+
+| Configuration | Dataset Size | Speed |
+|---------------|--------------|-------|
+| Default (all clips) | ~10x videos | Baseline |
+| `--clips-per-video 1` | = videos | ~10x faster |
+| `--clips-per-video 1 --no-augment` | = videos | ~15x faster |
+
+#### Segment-based Random Sampling (`--segment-sampling`)
+
+When enabled, divides each video into N segments and randomly samples 1 frame from each segment (like TSN). This provides better temporal coverage while maintaining data augmentation:
+
+```
+Video: [=========================================]
+        |seg1||seg2||seg3||seg4|...|seg32|
+          ↓     ↓     ↓     ↓        ↓
+        [rand][rand][rand][rand]...[rand]
+        
+Output: 32 frames spread across entire video
+```
+
+**Note:** Segment sampling is only applied during training. Evaluation uses uniform temporal sampling for deterministic results.
 
 ## Evaluation
 
