@@ -50,6 +50,7 @@ torch.set_float32_matmul_precision('medium')
 @click.option("--seed", type=int, default=None, help="random seed.")
 @click.option("--preview-video", type=bool, is_flag=True, show_default=True, default=False, help="Show input video")
 @click.option("--run-name", type=str, default=None, help="Name for this training run. If not provided, will be auto-generated.")
+@click.option("-w", "--weight-path", type=click.Path(exists=True), default=None, help="Path to pretrained weights (from convert_vit_weight.py or previous training). Overrides config.")
 def main(
     config,
     dataset,
@@ -65,6 +66,7 @@ def main(
     seed,
     preview_video,
     run_name,
+    weight_path,
 ):
     # Load configuration from file if provided
     cfg = {}
@@ -88,6 +90,7 @@ def main(
         'seed': seed,
         'preview_video': preview_video,
         'run_name': run_name,
+        'weight_path': weight_path,
     }
     
     # Merge config with CLI args (CLI args take precedence)
@@ -321,7 +324,30 @@ def main(
     lr = get_config_value(merged_config, 'training.lr', 1e-4)
     weight_decay = get_config_value(merged_config, 'training.weight_decay', 0.001)
     label_smoothing = get_config_value(merged_config, 'training.label_smoothing', 0.0)
-    weight_path = get_config_value(merged_config, 'paths.pretrained_weight', "tubevit_b_(a+iv)+(d+v)+(e+iv)+(f+v).pt")
+    
+    # Weight path: CLI arg > config > default
+    # Auto-detect default weight file based on num_classes
+    default_weight_path = f"pretrained_weights/init_weight_vitb16_nc{num_classes}_f{frames_per_clip}_v{video_size[0]}x{video_size[1]}.pt"
+    legacy_default = "tubevit_b_(a+iv)+(d+v)+(e+iv)+(f+v).pt"
+    
+    weight_path = (
+        get_config_value(merged_config, 'weight_path') or  # CLI arg (highest priority)
+        get_config_value(merged_config, 'paths.pretrained_weight') or  # Config file
+        (default_weight_path if Path(default_weight_path).exists() else legacy_default)  # Auto-detect or legacy
+    )
+    
+    print(f"\n{'='*60}")
+    print("Pretrained Weights:")
+    print(f"{'='*60}")
+    print(f"Weight path: {weight_path}")
+    if Path(weight_path).exists():
+        print(f"✓ File exists")
+    else:
+        print(f"⚠️  File not found! Training will start from scratch.")
+        print(f"   To generate weights, run:")
+        print(f"   python scripts/convert_vit_weight.py -nc {num_classes} -f {frames_per_clip} -v {video_size[0]} {video_size[1]}")
+        weight_path = None
+    print(f"{'='*60}\n")
     
     model = TubeViTLightningModule(
         num_classes=num_classes,

@@ -556,8 +556,33 @@ class TubeViTLightningModule(pl.LightningModule):
         self.loss_func = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
         self.example_input_array = Tensor(1, *video_shape)
 
-        if weight_path is not None: 
-            self.model.load_state_dict(torch.load(weight_path), strict=False)
+        if weight_path is not None:
+            # Load pretrained weights with handling for different num_classes (transfer learning)
+            pretrained_dict = torch.load(weight_path)
+            model_dict = self.model.state_dict()
+            
+            # Filter out weights with mismatched shapes (typically the classification head)
+            filtered_dict = {}
+            skipped_keys = []
+            for k, v in pretrained_dict.items():
+                if k in model_dict:
+                    if v.shape == model_dict[k].shape:
+                        filtered_dict[k] = v
+                    else:
+                        skipped_keys.append(f"{k}: pretrained {v.shape} vs model {model_dict[k].shape}")
+                else:
+                    skipped_keys.append(f"{k}: not in model")
+            
+            if skipped_keys:
+                print(f"\n{'='*60}")
+                print("Transfer Learning: Skipped weights with mismatched shapes:")
+                for key in skipped_keys:
+                    print(f"  - {key}")
+                print(f"{'='*60}\n")
+            
+            # Load the filtered weights
+            self.model.load_state_dict(filtered_dict, strict=False)
+            print(f"✓ Loaded {len(filtered_dict)}/{len(pretrained_dict)} pretrained weights")
 
         self.max_epochs = max_epochs
         self.weight_decay = weight_decay
